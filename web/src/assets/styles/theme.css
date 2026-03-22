@@ -118,6 +118,14 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* ========================================
@@ -752,26 +760,13 @@ body {
 }
 
 /* ========================================
-   Scrollbar (for webkit browsers)
+   Scrollbar - Hidden globally
    ======================================== */
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--color-bg-secondary);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 /* ========================================
@@ -1607,18 +1602,6 @@ body {
    ======================================== */
 
 @media screen and (max-width: 750px) {
-  /* 隐藏移动端滚动条 */
-  ::-webkit-scrollbar {
-    display: none;
-    width: 0;
-    height: 0;
-  }
-
-  body {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-
   .chapter-wrapper .chapter {
     border-radius: 0 !important;
     margin: 0 !important;
@@ -2132,23 +2115,5 @@ body {
 }
 
 /* ========================================
-   Custom Scrollbar for Reader
+   End of Styles
    ======================================== */
-
-.chapter-wrapper .data-wrapper::-webkit-scrollbar {
-  width: 6px;
-}
-
-.chapter-wrapper .data-wrapper::-webkit-scrollbar-track {
-  background: var(--color-bg-secondary);
-  border-radius: 3px;
-}
-
-.chapter-wrapper .data-wrapper::-webkit-scrollbar-thumb {
-  background: var(--color-border);
-  border-radius: 3px;
-}
-
-.chapter-wrapper .data-wrapper::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-muted);
-}
