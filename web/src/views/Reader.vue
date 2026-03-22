@@ -3515,6 +3515,14 @@ export default {
     margin: 0 auto;
     background-size: cover;
     position: relative;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+
+    &::-webkit-scrollbar {
+      display: none;
+      width: 0;
+      height: 0;
+    }
 
     >>>.el-icon-loading {
       font-size: 36px;
@@ -3565,11 +3573,27 @@ export default {
       line-height: 1.8;
       overflow: hidden;
       font-family: 'Microsoft YaHei', PingFangSC-Regular, HelveticaNeue-Light, 'Helvetica Neue Light', sans-serif;
+      scrollbar-width: none;
+      -ms-overflow-style: none;
+
+      &::-webkit-scrollbar {
+        display: none;
+        width: 0;
+        height: 0;
+      }
 
       .content-inner {
         min-height: calc(var(--vh, 1vh) * 80);
         padding-bottom: 25px;
         box-sizing: border-box;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+
+        &::-webkit-scrollbar {
+          display: none;
+          width: 0;
+          height: 0;
+        }
       }
     }
 
