@@ -1607,6 +1607,18 @@ body {
    ======================================== */
 
 @media screen and (max-width: 750px) {
+  /* 隐藏移动端滚动条 */
+  ::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  body {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
   .chapter-wrapper .chapter {
     border-radius: 0 !important;
     margin: 0 !important;
