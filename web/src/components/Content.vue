@@ -680,18 +680,42 @@ p {
   word-wrap: break-word;
   word-break: break-all;
   text-indent: 2em;
+  transition: all 150ms ease;
 }
 p.reading {
-  color: red !important;
+  color: var(--color-accent, #8B4513) !important;
+  background: var(--color-accent-soft, rgba(139, 69, 19, 0.1));
+  border-left: 3px solid var(--color-accent, #8B4513);
+  margin-left: -16px;
+  padding-left: 13px;
+  border-radius: 0 6px 6px 0;
 }
 h3 {
-  font-size: 28px;
-  line-height: 1.2;
+  font-size: 24px;
+  line-height: 1.3;
   margin: 1em 0;
   text-align: center;
+  font-family: var(--font-display, 'Noto Serif SC', Georgia, serif);
+  font-weight: 600;
+  color: var(--color-text-primary, #2C2825);
+  letter-spacing: -0.01em;
+  padding-bottom: 0.8em;
+  border-bottom: 1px solid var(--color-border-light, #EDE9E3);
+  position: relative;
+}
+h3::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 60px;
+  height: 2px;
+  background: var(--color-accent, #8B4513);
+  border-radius: 1px;
 }
 h3.reading {
-  color: red !important;
+  color: var(--color-accent, #8B4513) !important;
 }
 .volume-chapter {
   min-height: 100vh;
@@ -705,11 +729,16 @@ h3.reading {
 
   .volume-tag {
     text-align: right;
+    font-style: italic;
+    color: var(--color-text-tertiary, #8A857F);
   }
 }
 .content-audio {
   margin: 0 auto;
   width: 100%;
+  background: var(--color-bg-card, #FFFFFF);
+  border-radius: 16px;
+  box-shadow: 0 8px 24px rgba(44, 40, 37, 0.12);
 
   .book-cover {
 
@@ -717,26 +746,33 @@ h3.reading {
       max-width: 200px;
       margin: 0 auto;
       display: block;
+      border-radius: 16px;
+      box-shadow: 0 8px 24px rgba(44, 40, 37, 0.12);
     }
   }
 
   .book-progress {
-    padding: 25px 15px;
+    padding: 20px 24px;
     display: flex;
     flex-direction: row;
     align-items: center;
+    background: var(--color-bg-secondary, #F5F2ED);
+    border-radius: 16px;
+    margin: 24px 16px;
 
     .progress-tip {
       padding-top: 5px;
       padding-bottom: 5px;
       font-size: 14px;
-      width: 45px;
+      width: 50px;
+      font-family: var(--font-body, 'Noto Sans SC', sans-serif);
+      color: var(--color-text-secondary, #5A5550);
     }
 
     .progress-container {
       flex: 1;
-      margin-left: 10px;
-      margin-right: 10px;
+      margin-left: 12px;
+      margin-right: 12px;
     }
 
     .total-time {
@@ -745,7 +781,7 @@ h3.reading {
   }
 
   .book-operation {
-    padding: 0px 15px 25px;
+    padding: 0px 24px 24px;
     display: flex;
     flex-direction: row;
     justify-content: space-around;
@@ -753,37 +789,55 @@ h3.reading {
     i {
       display: inline-block;
       cursor: pointer;
-      font-size: 24px;
+      font-size: 28px;
       line-height: 1;
+      color: var(--color-text-secondary, #5A5550);
+      transition: all 150ms ease;
+      padding: 12px;
+
+      &:hover {
+        color: var(--color-accent, #8B4513);
+        transform: scale(1.1);
+      }
     }
   }
 
   .book-info {
-    padding: 10px 15px;
+    padding: 20px 24px;
     display: flex;
     flex-direction: row;
     align-items: center;
+    background: linear-gradient(135deg, var(--color-bg-tertiary, #EDE9E3), var(--color-bg-secondary, #F5F2ED));
+    border-radius: 16px;
+    margin: 0 16px 16px;
 
     .book-cover {
       width: 50px;
+      box-shadow: 0 4px 12px rgba(44, 40, 37, 0.08);
 
       img {
         width: 100%;
         max-height: 100%;
+        border-radius: 6px;
       }
     }
 
     .book-intro {
       flex: 1;
-      padding-left: 15px;
+      padding-left: 16px;
 
       .title {
-        font-size: 16px;
+        font-size: 18px;
+        font-family: var(--font-display, 'Noto Serif SC', Georgia, serif);
+        font-weight: 600;
+        color: var(--color-text-primary, #2C2825);
       }
 
       .subtitle {
-        margin-top: 5px;
+        margin-top: 8px;
         font-size: 14px;
+        font-family: var(--font-body, 'Noto Sans SC', sans-serif);
+        color: var(--color-text-tertiary, #8A857F);
       }
     }
   }
@@ -792,7 +846,7 @@ h3.reading {
   border: none;
   width: 100%;
   min-height: calc(var(--vh, 1vh) * 50);
-  // pointer-events: none;
+  border-radius: 10px;
 }
 </style>
 <style lang="stylus">
@@ -801,36 +855,55 @@ h3.reading {
     width: 100%;
     max-width: 100vw;
     display: block;
+    border-radius: 10px;
   }
 }
 .day {
   .content-audio {
     .book-operation {
-      color: #222;
+      i {
+        color: var(--color-text-secondary, #5A5550);
+      }
     }
 
     .book-intro {
       .title {
-        color: #121212;
+        color: var(--color-text-primary, #2C2825);
       }
       .subtitle {
-        color: #666;
+        color: var(--color-text-tertiary, #8A857F);
       }
     }
   }
 }
 .night {
   .content-audio {
-    .book-operation {
-      color: #888;
+    background: var(--color-bg-card, #252423);
+
+    .book-progress {
+      background: var(--color-bg-tertiary, #2A2928);
     }
 
-    .book-intro {
-      .title {
-        color: #888;
+    .book-operation {
+      i {
+        color: var(--color-text-tertiary, #8A8780);
+
+        &:hover {
+          color: var(--color-accent, #C4956A);
+        }
       }
-      .subtitle {
-        color: #666;
+    }
+
+    .book-info {
+      background: linear-gradient(135deg, var(--color-bg-tertiary, #2A2928), var(--color-bg-secondary, #222120));
+
+      .book-intro {
+        .title {
+          color: var(--color-text-primary, #E8E6E3);
+        }
+        .subtitle {
+          color: var(--color-text-tertiary, #8A8780);
+        }
       }
     }
   }

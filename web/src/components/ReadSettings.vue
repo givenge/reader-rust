@@ -908,25 +908,71 @@ export default {
   padding: 24px;
   padding-top: calc(24px + constant(safe-area-inset-top));
   padding-top: calc(24px + env(safe-area-inset-top));
+  background: var(--color-bg-card, #FFFFFF);
+  border-radius: 16px;
 
   .settings-title {
-    font-size: 18px;
-    line-height: 22px;
-    margin-bottom: 28px;
-    font-family: -apple-system, "Noto Sans", "Helvetica Neue", Helvetica, "Nimbus Sans L", Arial, "Liberation Sans", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Source Han Sans CN", "Microsoft YaHei", "Wenquanyi Micro Hei", "WenQuanYi Zen Hei", "ST Heiti", SimHei, "WenQuanYi Zen Hei Sharp", sans-serif;
-    font-weight: 400;
+    font-size: 20px;
+    line-height: 26px;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--color-border-light, #EDE9E3);
+    font-family: var(--font-display, 'Noto Serif SC', Georgia, serif);
+    font-weight: 600;
+    color: var(--color-text-primary, #2C2825);
+    letter-spacing: -0.01em;
+    position: relative;
+
+    &::after {
+      content: '';
+      position: absolute;
+      bottom: -1px;
+      left: 0;
+      width: 40px;
+      height: 2px;
+      background: var(--color-accent, #8B4513);
+      border-radius: 1px;
+    }
 
     .title-btn {
       float: right;
-      font-size: 14px;
-      color: #ed4259;
+      font-size: 13px;
+      color: var(--color-accent, #8B4513);
       cursor: pointer;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      background: var(--color-accent-soft, rgba(139, 69, 19, 0.1));
+      font-family: var(--font-body, 'Noto Sans SC', sans-serif);
+      font-weight: 500;
+      transition: all 150ms ease;
+      margin-top: -4px;
+    }
+
+    .title-btn:hover {
+      background: var(--color-accent, #8B4513);
+      color: #fff;
     }
   }
 
   .setting-list {
-    max-height: 45vh;
+    max-height: 50vh;
     overflow-y: auto;
+    padding-right: 8px;
+
+    &::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: var(--color-bg-secondary, #F5F2ED);
+      border-radius: 3px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: var(--color-border, #E5E0D8);
+      border-radius: 3px;
+    }
+
     ul {
       list-style: none outside none;
       margin: 0;
@@ -941,18 +987,21 @@ export default {
 
         .setting-item-title {
           display: inline-block;
-          width: 56px;
+          width: 72px;
           margin-right: 16px;
           vertical-align: top;
           line-height: 36px;
-          color: #666;
+          font-family: var(--font-body, 'Noto Sans SC', sans-serif);
+          font-size: 13px;
+          font-weight: 600;
+          color: var(--color-text-secondary, #5A5550);
         }
         .font-color-title {
           line-height: 40px;
         }
         .selection-zone {
           display: inline-block;
-          width: calc(100% - 72px);
+          width: calc(100% - 88px);
           word-wrap: break-word;
 
           span {
@@ -964,13 +1013,25 @@ export default {
           width: 78px;
           height: 34px;
           cursor: pointer;
-          margin-right: 16px;
-          border-radius: 2px;
+          margin-right: 10px;
+          border-radius: 9999px;
           text-align: center;
           vertical-align: middle;
           display: inline-block;
-          font: 14px / 34px PingFangSC-Regular, HelveticaNeue-Light, 'Helvetica Neue Light', 'Microsoft YaHei', sans-serif;
+          font-family: var(--font-body, 'Noto Sans SC', sans-serif);
+          font-size: 13px;
+          line-height: 34px;
           position: relative;
+          border: 1px solid var(--color-border, #E5E0D8);
+          background: var(--color-bg-card, #FFFFFF);
+          color: var(--color-text-secondary, #5A5550);
+          transition: all 150ms ease;
+          box-shadow: 0 1px 2px rgba(44, 40, 37, 0.04);
+
+          &:hover {
+            border-color: var(--color-accent, #8B4513);
+            color: var(--color-accent, #8B4513);
+          }
 
           .delete-custom-config-icon {
             display: inline-block;
@@ -979,7 +1040,7 @@ export default {
             top: -10px;
             right: -10px;
             font-size: 20px;
-            color: #ed4259;
+            color: var(--color-danger, #A63D40);
             z-index: 10;
           }
 
@@ -991,27 +1052,32 @@ export default {
             right: -10px;
             font-size: 20px;
             z-index: 10;
-            color: #606266;
+            color: var(--color-text-tertiary, #8A857F);
 
             &.active {
-              color: #ed4259;
+              color: var(--color-accent, #8B4513);
             }
           }
         }
 
         .span-item.selected  {
-          border: 1px solid #ed4259;
-          color: #ed4259;
+          border: 1px solid var(--color-accent, #8B4513);
+          background: var(--color-accent, #8B4513);
+          color: #fff;
+          box-shadow: 0 2px 4px rgba(139, 69, 19, 0.2);
         }
 
         .custom-theme {
-          width: calc(100% - 72px);
+          width: calc(100% - 88px);
           display: inline-block;
 
           .custom-theme-title {
             display: inline-block;
             margin-right: 28px;
             margin-bottom: 5px;
+            font-family: var(--font-body, 'Noto Sans SC', sans-serif);
+            font-size: 13px;
+            color: var(--color-text-secondary, #5A5550);
           }
 
           .content-bg-preview {
@@ -1023,6 +1089,9 @@ export default {
             margin-bottom: 8px;
             position: relative;
             box-sizing: border-box;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 1px 2px rgba(44, 40, 37, 0.04);
 
             img {
               width: 100%;
@@ -1036,18 +1105,28 @@ export default {
               top: -6px;
               right: -6px;
               font-size: 18px;
-              color: #ed4259;
+              color: var(--color-danger, #A63D40);
             }
           }
           .selected {
-            color: #ed4259;
-            border: 1px solid #ed4259;
+            border: 2px solid var(--color-accent, #8B4513);
           }
           .upload-bg-btn {
             display: inline-block;
             margin-left: 10px;
-            color: #ed4259;
+            color: var(--color-accent, #8B4513);
             cursor: pointer;
+            font-family: var(--font-body, 'Noto Sans SC', sans-serif);
+            font-size: 13px;
+            padding: 8px 16px;
+            border-radius: 9999px;
+            border: 1px solid var(--color-accent, #8B4513);
+            transition: all 150ms ease;
+            vertical-align: top;
+          }
+          .upload-bg-btn:hover {
+            background: var(--color-accent, #8B4513);
+            color: #fff;
           }
         }
 
@@ -1055,20 +1134,30 @@ export default {
           line-height: 32px;
           width: 34px;
           height: 34px;
-          margin-right: 16px;
+          margin-right: 12px;
           border-radius: 100%;
           display: inline-block;
           cursor: pointer;
           text-align: center;
           vertical-align: middle;
+          border: 2px solid var(--color-border, #E5E0D8);
+          box-shadow: 0 1px 2px rgba(44, 40, 37, 0.04);
+          transition: all 150ms ease;
 
           .iconfont {
             display: none;
+            color: var(--color-accent, #8B4513);
+          }
+
+          &:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(44, 40, 37, 0.08);
           }
         }
 
         .selected {
-          color: #ed4259;
+          border-color: var(--color-accent, #8B4513);
+          box-shadow: 0 4px 12px rgba(44, 40, 37, 0.08);
 
           .iconfont {
             display: inline;
@@ -1080,34 +1169,44 @@ export default {
 
         .resize {
           display: inline-block;
-          height: 34px;
+          height: 36px;
           vertical-align: middle;
-          border-radius: 2px;
+          border-radius: 9999px;
+          background: var(--color-bg-secondary, #F5F2ED);
+          border: 1px solid var(--color-border, #E5E0D8);
+          overflow: hidden;
 
           span {
             min-width: 72px;
-            height: 34px;
-            line-height: 34px;
+            height: 36px;
+            line-height: 36px;
             display: inline-block;
             cursor: pointer;
             text-align: center;
             vertical-align: middle;
+            transition: all 150ms ease;
 
             em {
               font-style: normal;
             }
+
+            &:hover {
+              background: var(--color-accent-soft, rgba(139, 69, 19, 0.1));
+              color: var(--color-accent, #8B4513);
+            }
           }
 
           .lang {
-            color: #a6a6a6;
+            color: var(--color-text-primary, #2C2825);
             font-weight: 400;
-            font-family: -apple-system, "Noto Sans", "Helvetica Neue", Helvetica, "Nimbus Sans L", Arial, "Liberation Sans", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Source Han Sans CN", "Microsoft YaHei", "Wenquanyi Micro Hei", "WenQuanYi Zen Hei", "ST Heiti", SimHei, "WenQuanYi Zen Hei Sharp", sans-serif;
+            font-family: var(--font-body, 'Noto Sans SC', sans-serif);
           }
 
           b {
             display: inline-block;
             height: 20px;
             vertical-align: middle;
+            border-right: 1px solid var(--color-border, #E5E0D8);
           }
         }
       }
@@ -1116,16 +1215,25 @@ export default {
         display: flex;
         flex-direction: row;
         justify-content: space-between;
+        padding-top: 16px;
+        border-top: 1px solid var(--color-border-light, #EDE9E3);
 
         .span-btn {
           cursor: pointer;
-          color: #ed4259;
+          color: var(--color-accent, #8B4513);
+          font-family: var(--font-body, 'Noto Sans SC', sans-serif);
+          font-size: 13px;
+          padding: 8px 16px;
+          border-radius: 9999px;
+          border: 1px solid var(--color-accent, #8B4513);
+          transition: all 150ms ease;
+        }
+        .span-btn:hover {
+          background: var(--color-accent, #8B4513);
+          color: #fff;
         }
       }
     }
-  }
-  .setting-list::-webkit-scrollbar {
-    width: 0 !important;
   }
   .el-color-picker {
     vertical-align: middle;
@@ -1134,69 +1242,52 @@ export default {
 
 .night {
   >>>.theme-item {
-    border: 1px solid #666;
+    border: 2px solid var(--color-border, #3A3835);
   }
 
   >>>.selected {
-    border: 1px solid #666;
+    border-color: var(--color-accent, #C4956A);
   }
 
   >>>.moon-icon {
-    color: #ed4259;
+    color: var(--color-accent, #C4956A);
   }
 
   .span-item {
-    border: 1px solid #666;
-    background: rgba(45, 45, 45, 0.5);
+    border: 1px solid var(--color-border, #3A3835);
+    background: var(--color-bg-tertiary, #2A2928);
+  }
+
+  .span-item.selected {
+    background: var(--color-accent, #C4956A);
+    border-color: var(--color-accent, #C4956A);
   }
 
   >>>.resize {
-    border: 1px solid #666;
-    background: rgba(45, 45, 45, 0.5);
+    border: 1px solid var(--color-border, #3A3835);
+    background: var(--color-bg-tertiary, #2A2928);
 
     b {
-      border-right: 1px solid #666;
+      border-right: 1px solid var(--color-border, #3A3835);
     }
   }
 }
 
 .day {
-  >>>.theme-item {
-    border: 1px solid #e5e5e5;
-  }
-
-  >>>.selected {
-    border: 1px solid #ed4259;
-  }
-
   >>>.moon-icon {
     display: inline;
     color: rgba(255, 255, 255, 0.2);
-  }
-
-  .span-item {
-    background: rgba(255, 255, 255, 0.5);
-    border: 1px solid rgba(0, 0, 0, 0.1);
-  }
-
-  >>>.resize {
-    border: 1px solid #e5e5e5;
-    background: rgba(255, 255, 255, 0.5);
-
-    b {
-      border-right: 1px solid #e5e5e5;
-    }
   }
 }
 
 @media (hover: hover) {
   .span-item:hover {
-    border: 1px solid #ed4259;
-    color: #ed4259;
+    border-color: var(--color-accent, #8B4513);
+    color: var(--color-accent, #8B4513);
   }
   li {
     .less:hover, .more:hover {
-      color: #ed4259;
+      color: var(--color-accent, #8B4513);
     }
   }
 }
@@ -1209,7 +1300,8 @@ export default {
     text-align: center;
     width: 72px;
     font-size: 14px;
-    color: #a6a6a6;
+    color: var(--color-text-primary, #2C2825);
+    font-family: var(--font-body, 'Noto Sans SC', sans-serif);
   }
 }
 </style>

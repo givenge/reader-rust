@@ -315,20 +315,20 @@
         <div class="setting-item" v-if="showSpeechConfig">
           <div class="setting-title">语音库</div>
           <div class="setting-value">
-            <div class="voice-list">
-              <el-radio-group
-                v-model="voiceName"
-                size="small"
-                class="radio-group"
-              >
-                <el-radio-button
-                  class="radio-button"
-                  :label="voice.name"
-                  :key="index"
-                  v-for="(voice, index) in voiceList"
-                ></el-radio-button>
-              </el-radio-group>
-            </div>
+            <el-select
+              v-model="voiceName"
+              placeholder="请选择语音"
+              size="small"
+              style="width: 100%"
+              filterable
+            >
+              <el-option
+                v-for="(voice, index) in voiceList"
+                :key="index"
+                :label="voice.name + ' (' + voice.lang + ')'"
+                :value="voice.name"
+              ></el-option>
+            </el-select>
           </div>
         </div>
         <div class="setting-item" v-if="showSpeechConfig">
@@ -734,7 +734,10 @@ export default {
       showPrevChapterSize: 0,
 
       speechMinutes: 0,
-      speechEndTime: 0
+      speechEndTime: 0,
+      isSpeechTransitioning: false,  // 防止朗读切换时的竞态条件
+      autoReadingParagraphIndex: -1,  // 自动翻页当前段落索引
+      autoReadingProcessing: false    // 防止自动翻页重入
     };
   },
   computed: {
@@ -963,15 +966,15 @@ export default {
         return this.$store.state.speechVoiceConfig.voiceName;
       },
       set(val) {
-        if (val !== this.$store.state.speechVoiceConfig.voiceName) {
-          if (this.speechSpeaking) {
-            this.restartSpeech();
-          }
-        }
+        // 先更新store
         this.$store.commit("setSpeechVoiceConfig", {
           ...this.$store.state.speechVoiceConfig,
           voiceName: val
         });
+        // 如果正在朗读，用新语音重新开始
+        if (this.speechSpeaking) {
+          this.restartSpeech();
+        }
       }
     },
     speechRate: {
@@ -2196,6 +2199,15 @@ export default {
         }
         return a.lang > b.lang ? 1 : a.lang < b.lang ? -1 : 0;
       });
+      // 如果没有选择语音，默认选择第一个中文语音或第一个可用语音
+      if (!this.voiceName && this.voiceList.length > 0) {
+        const zhVoice = this.voiceList.find(v => v.lang.startsWith("zh-"));
+        const defaultVoice = zhVoice || this.voiceList[0];
+        this.$store.commit("setSpeechVoiceConfig", {
+          ...this.$store.state.speechVoiceConfig,
+          voiceName: defaultVoice.name
+        });
+      }
     },
     changeSpeechRate(rate) {
       this.speechRate = rate;
@@ -2215,15 +2227,29 @@ export default {
       if (this.error) {
         return;
       }
+
+      // 如果语音列表为空，尝试重新获取
+      if (!this.voiceList.length) {
+        this.fetchVoiceList();
+      }
+
       if (!this.voiceName) {
+        this.$message.warning("请先选择语音库");
         return;
       }
       const voice = this.voiceList.find(v => v.name === this.voiceName);
       if (!voice) {
+        this.$message.warning("未找到所选语音，请重新选择");
         return;
       }
 
+      // 如果正在朗读，先停止
       if (window.speechSynthesis.speaking) {
+        this.stopSpeech();
+        // 等待停止完成后再开始
+        setTimeout(() => {
+          this.startSpeech();
+        }, 100);
         return;
       }
 
@@ -2238,7 +2264,7 @@ export default {
       }
 
       const paragraph = this.getCurrentParagraph();
-      if (!paragraph.innerText) {
+      if (!paragraph || !paragraph.innerText) {
         this.speechNext();
         return;
       }
@@ -2251,6 +2277,7 @@ export default {
       this.utterance.onend = () => {
         // 下一段
         if (!this.skipAutoNext) {
+          this.speechSpeaking = false;
           this.speechNext();
         } else {
           this.skipAutoNext = false;
@@ -2258,6 +2285,10 @@ export default {
         }
       };
       this.utterance.onerror = event => {
+        // 忽略 interrupted 错误，这是正常停止时的错误
+        if (event.error === 'interrupted' || event.error === 'canceled') {
+          return;
+        }
         if (event.error || event.name) {
           this.$message.error(
             `朗读错误:  ${event.type || ""}  ${event.error ||
@@ -2265,7 +2296,7 @@ export default {
               event.toString()}`
           );
         }
-        this.speechSpeaking = window.speechSynthesis.speaking || false;
+        this.speechSpeaking = false;
       };
       this.utterance.voice = voice;
       this.utterance.pitch = this.speechPitch;
@@ -2276,39 +2307,58 @@ export default {
       this.speechSpeaking = true;
       window.speechSynthesis.speak(this.utterance);
     },
-    stopSpeech() {
+    stopSpeech(clearReadingClass = true) {
       try {
         this.skipAutoNext = true;
+        this.speechSpeaking = false;
         window.speechSynthesis.cancel();
-        const current = this.getCurrentParagraph();
-        if (current) {
-          current.className = "";
+        if (clearReadingClass) {
+          const current = this.getCurrentParagraph();
+          if (current) {
+            current.className = "";
+          }
         }
       } catch (error) {
         //
       }
     },
     restartSpeech() {
-      this.stopSpeech();
+      // 停止时保留阅读状态标记，不清除 className
+      this.stopSpeech(false);
       setTimeout(() => {
         this.startSpeech();
-      }, 100);
+      }, 150);
     },
     toggleSpeech() {
       this.speechSpeaking ? this.stopSpeech() : this.startSpeech();
     },
     speechPrev() {
-      if (window.speechSynthesis.speaking) {
-        this.stopSpeech();
-      }
       const current = this.getCurrentParagraph();
       const prev = this.getPrevParagraph();
+
+      // 先停止当前朗读，保留阅读状态
+      if (window.speechSynthesis.speaking) {
+        this.stopSpeech(false);
+      }
+
       if (prev) {
-        this.showParagraph(prev, true);
-        current.className = "";
+        // 清除当前段落的阅读状态
+        if (current) {
+          current.className = "";
+        }
+        // 设置上一段为阅读状态
         prev.className = "reading";
-        this.startSpeech();
+        this.showParagraph(prev, true);
+
+        // 延迟开始朗读，确保停止完成
+        setTimeout(() => {
+          this.startSpeech();
+        }, 150);
       } else {
+        // 清除当前段落的阅读状态
+        if (current) {
+          current.className = "";
+        }
         // 上一章
         this.$once("showContent", () => {
           setTimeout(() => {
@@ -2319,17 +2369,32 @@ export default {
       }
     },
     speechNext() {
-      if (window.speechSynthesis.speaking) {
-        this.stopSpeech();
-      }
       const current = this.getCurrentParagraph();
       const next = this.getNextParagraph();
+
+      // 先停止当前朗读，保留阅读状态
+      if (window.speechSynthesis.speaking) {
+        this.stopSpeech(false);
+      }
+
       if (next) {
-        this.showParagraph(next, true);
-        current.className = "";
+        // 清除当前段落的阅读状态
+        if (current) {
+          current.className = "";
+        }
+        // 设置下一段为阅读状态
         next.className = "reading";
-        this.startSpeech();
+        this.showParagraph(next, true);
+
+        // 延迟开始朗读，确保停止完成
+        setTimeout(() => {
+          this.startSpeech();
+        }, 150);
       } else {
+        // 清除当前段落的阅读状态
+        if (current) {
+          current.className = "";
+        }
         // 下一章
         this.$once("showContent", () => {
           setTimeout(() => {
@@ -2339,6 +2404,21 @@ export default {
         this.toNextChapter();
       }
     },
+    // 获取过滤后的段落列表（去除重复内容）
+    getFilteredParagraphs() {
+      const allElements = this.$refs.bookContentRef.$el.querySelectorAll("h3,p");
+      const list = [];
+      let lastText = '';
+      allElements.forEach(el => {
+        const text = el.textContent.trim();
+        // 跳过空内容和与上一段重复的内容
+        if (text && text !== lastText) {
+          list.push(el);
+          lastText = text;
+        }
+      });
+      return list;
+    },
     getCurrentParagraph() {
       const readingEle = this.$refs.bookContentRef.$el.querySelectorAll(
         ".reading"
@@ -2346,7 +2426,7 @@ export default {
       let currentParagraph = null;
       if (!readingEle.length) {
         // 没有正在读的段落，遍历找到当前页面的第一段
-        const list = this.$refs.bookContentRef.$el.querySelectorAll("h3,p");
+        const list = this.getFilteredParagraphs();
         for (let i = 0; i < list.length; i++) {
           const elePos = list[i].getBoundingClientRect();
           if (this.isSlideRead) {
@@ -2376,7 +2456,7 @@ export default {
     },
     getPrevParagraph() {
       const current = this.getCurrentParagraph();
-      const list = this.$refs.bookContentRef.$el.querySelectorAll("h3,p");
+      const list = this.getFilteredParagraphs();
       for (let i = 0; i < list.length; i++) {
         if (i > 0 && current === list[i]) {
           return list[i - 1];
@@ -2386,7 +2466,7 @@ export default {
     },
     getNextParagraph() {
       const current = this.getCurrentParagraph();
-      const list = this.$refs.bookContentRef.$el.querySelectorAll("h3,p");
+      const list = this.getFilteredParagraphs();
       for (let i = 0; i < list.length; i++) {
         if (current === list[i]) {
           return list[i + 1];
@@ -2769,60 +2849,116 @@ export default {
     startAutoReading() {
       this.showToolBar = false;
       this.autoReading = true;
+      this.autoReadingParagraphIndex = -1;
+      this.autoReadingProcessing = false;
       this.autoRead();
     },
     autoRead() {
       if (!this.autoReading) {
         return;
       }
+      // 防止重入
+      if (this.autoReadingProcessing) {
+        return;
+      }
+      this.autoReadingProcessing = true;
+
       if (this.showToolBar) {
+        this.autoReadingProcessing = false;
         this.autoReadingTimer = setTimeout(() => {
           this.autoRead();
         }, 300);
         return;
       }
       if (this.config.autoReadingMethod === "像素滚动") {
+        this.autoReadingProcessing = false;
         this.autoReadByPixel();
         return;
       }
-      const current = this.getCurrentParagraph();
-      const next = this.getNextParagraph();
-      if (next) {
-        current.className = "reading";
-        next.className = "";
-        // 计算当前段落
-        let delayTime = this.config.autoReadingLineTime;
-        try {
-          const currentPos = current.getBoundingClientRect();
-          delayTime =
-            delayTime *
-            Math.ceil(
-              currentPos.height / this.config.fontSize / this.config.lineHeight
-            );
-        } catch (error) {
-          //
-        }
-        // console.log(delayTime, next);
-        this.autoReadingTimer = setTimeout(() => {
-          current.className = "";
-          next.className = "reading";
-          this.showParagraph(next, true);
 
-          setTimeout(() => {
-            this.autoRead();
-          }, 32);
-        }, delayTime);
-      } else {
-        // 下一章
+      // 获取所有段落
+      const allElements = this.$refs.bookContentRef.$el.querySelectorAll("h3,p");
+      // 过滤掉重复内容的段落（如章节标题同时存在于h3和p中）
+      const list = [];
+      let lastText = '';
+      allElements.forEach(el => {
+        const text = el.textContent.trim();
+        // 跳过空内容和与上一段重复的内容
+        if (text && text !== lastText) {
+          list.push(el);
+          lastText = text;
+        }
+      });
+      if (!list.length) {
+        this.autoReadingProcessing = false;
+        return;
+      }
+
+      // 初始化：找到视口中的第一个段落
+      if (this.autoReadingParagraphIndex < 0) {
+        for (let i = 0; i < list.length; i++) {
+          const elePos = list[i].getBoundingClientRect();
+          if (this.isSlideRead) {
+            if (elePos.right > 0) {
+              this.autoReadingParagraphIndex = i;
+              break;
+            }
+          } else {
+            if (elePos.bottom > 50) {
+              this.autoReadingParagraphIndex = i;
+              break;
+            }
+          }
+        }
+        if (this.autoReadingParagraphIndex < 0) {
+          this.autoReadingParagraphIndex = 0;
+        }
+      }
+
+      // 确保索引有效
+      if (this.autoReadingParagraphIndex >= list.length) {
+        // 到达末尾，进入下一章
+        this.autoReadingParagraphIndex = -1;
+        this.autoReadingProcessing = false;
         this.$once("showContent", () => {
           setTimeout(() => {
             this.autoRead();
-          }, 100);
+          }, 300);
         });
         this.toNextChapter(() => {
           this.autoReading = false;
         });
+        return;
       }
+
+      const current = list[this.autoReadingParagraphIndex];
+
+      // 清除所有段落的 reading 标记，标记当前段落
+      list.forEach(el => el.classList.remove("reading"));
+      current.classList.add("reading");
+      this.showParagraph(current, true);
+
+      // 计算当前段落阅读时间
+      let delayTime = this.config.autoReadingLineTime;
+      try {
+        const currentPos = current.getBoundingClientRect();
+        delayTime =
+          delayTime *
+          Math.ceil(
+            currentPos.height / this.config.fontSize / this.config.lineHeight
+          );
+      } catch (error) {
+        //
+      }
+
+      // 标记处理完成，准备下一段
+      this.autoReadingProcessing = false;
+
+      // 等待阅读完成后移动到下一段
+      this.autoReadingTimer = setTimeout(() => {
+        this.autoReadingParagraphIndex++;
+        this.autoRead();
+      }, delayTime);
     },
     autoReadByPixel() {
       if (!this.autoReading) {
@@ -2864,11 +3000,16 @@ export default {
     },
     stopAutoReading() {
       if (this.autoReadingTimer) {
-        clearInterval(this.autoReadingTimer);
+        clearTimeout(this.autoReadingTimer);
+        this.autoReadingTimer = null;
       }
       this.autoReading = false;
-      const current = this.getCurrentParagraph();
-      current.className = "";
+      this.autoReadingParagraphIndex = -1;
+      this.autoReadingProcessing = false;
+      const list = this.$refs.bookContentRef?.$el?.querySelectorAll("h3,p");
+      if (list) {
+        list.forEach(el => el.classList.remove("reading"));
+      }
     },
     toggleAutoReading() {
       if (this.autoReading) {
