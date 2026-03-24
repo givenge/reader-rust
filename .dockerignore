@@ -1,0 +1,34 @@
+# Build artifacts
+target/
+**/target/
+
+# Dependencies
+web/node_modules/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Storage (will be created at runtime)
+storage/
+
+# Environment files
+.env
+.env.*
+
+# Documentation
+*.md
+!README.md
+
+# Claude
+.claude/
+
+# OS files
+.DS_Store
+Thumbs.db

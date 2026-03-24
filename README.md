@@ -17,6 +17,77 @@ Rust 版 `reader` 服务端，基于 axum + tokio + reqwest + sqlx(SQLite) + rqu
 cargo run
 ```
 
+## Docker 部署
+
+### 使用预编译镜像（推荐）
+
+```bash
+# 基础运行
+docker run -d --restart=always --name=reader-rust \
+  -v $(pwd)/storage:/app/storage \
+  -p 8080:8080 \
+  givenge/reader-rust:latest
+
+# 使用环境变量配置
+docker run -d --restart=always --name=reader-rust \
+  -e "LOG_LEVEL=info" \
+  -e "SECURE=true" \
+  -e "SECURE_KEY=your-admin-password" \
+  -e "INVITE_CODE=your-invite-code" \
+  -v $(pwd)/storage:/app/storage \
+  -p 8080:8080 \
+  givenge/reader-rust:latest
+```
+
+### 自行编译镜像
+
+```bash
+# 克隆仓库
+git clone https://github.com/givenge/reader-rust.git
+cd reader-rust
+
+# 构建镜像
+docker build -t reader-rust:latest .
+
+# 运行
+docker run -d --restart=always --name=reader \
+  -v $(pwd)/storage:/app/storage \
+  -p 8080:8080 \
+  reader-rust:latest
+```
+
+### 跨平台镜像构建
+
+```bash
+# 新建构建器
+docker buildx create --use --name mybuilder
+
+# 启动构建器
+docker buildx inspect mybuilder --bootstrap
+
+# 查看构建器及其所支持的 CPU 架构
+docker buildx ls
+
+# 构建跨平台镜像并推送
+docker buildx build -t givenge/reader-rust:latest --platform=linux/arm64,linux/amd64 . --push
+```
+
+### 更新镜像
+
+```bash
+# 拉取最新镜像
+docker pull givenge/reader-rust:latest
+
+# 通过 watchtower 自动更新
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock containrrr/watchtower --cleanup --run-once reader
+```
+
+### 访问地址
+
+- Web 端：http://localhost:8080/
+- API 接口：http://localhost:8080/reader3/
+
+
 ### 构建（Release）
 
 ```bash
