@@ -25,7 +25,10 @@ cargo build --release
 
 ### 或者使用musl静态编译
 
+> 需要在 Linux 环境或 Docker 中进行，macOS 不支持。
+
 ```bash
+rustup target add x86_64-unknown-linux-musl
 cargo build --target x86_64-unknown-linux-musl --release
 ```
 
