@@ -82,7 +82,21 @@ impl BookService {
     }
 
     pub async fn get_chapter_list(&self, source: &BookSource, toc_url: &str) -> Result<Vec<BookChapter>, AppError> {
+        self.get_chapter_list_with_cache("default", source, toc_url, false).await
+    }
+
+    pub async fn get_chapter_list_with_cache(&self, user_ns: &str, source: &BookSource, toc_url: &str, force_refresh: bool) -> Result<Vec<BookChapter>, AppError> {
+        // Check cache first (unless force refresh)
+        if !force_refresh {
+            if let Ok(Some(cached)) = self.load_chapter_list_cache(user_ns, toc_url).await {
+                if !cached.is_empty() {
+                    return Ok(cached);
+                }
+            }
+        }
         let (chapters, _) = self.get_chapter_list_with_pagination(source, toc_url).await?;
+        // Save to cache
+        let _ = self.save_chapter_list_cache(user_ns, toc_url, &chapters).await;
         Ok(chapters)
     }
 

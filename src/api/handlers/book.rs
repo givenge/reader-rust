@@ -77,6 +77,7 @@ pub struct BookContentRequest {
     #[serde(rename = "bookSource")]
     pub book_source: Option<BookSource>,
     pub index: Option<i32>,
+    pub refresh: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -436,17 +437,21 @@ pub async fn get_book_content(State(state): State<AppState>, Query(access_q): Qu
             if req.book_source_url.is_none() { req.book_source_url = v.book_source_url; }
             if req.book_source.is_none() { req.book_source = v.book_source; }
             if req.index.is_none() { req.index = v.index; }
+            if req.refresh.is_none() { req.refresh = v.refresh; }
         } else if let Ok(s) = std::str::from_utf8(&body) {
             for (k, v) in url::form_urlencoded::parse(s.as_bytes()) {
                 match k.as_ref() {
                     "chapterUrl" | "href" => req.chapter_url = Some(v.into_owned()),
                     "bookSourceUrl" | "origin" => req.book_source_url = Some(v.into_owned()),
                     "index" => req.index = v.parse().ok(),
+                    "refresh" => req.refresh = v.parse().ok(),
                     _ => {}
                 }
             }
         }
     }
+
+    let do_refresh = req.refresh.unwrap_or(0) > 0;
 
     // If we have url but no chapterUrl, treat url as bookUrl and use index
     let chapter_url = if let Some(url) = &req.chapter_url {
@@ -456,7 +461,13 @@ pub async fn get_book_content(State(state): State<AppState>, Query(access_q): Qu
             let source = resolve_book_source(&state, &user_ns, req.book_source_url.clone(), req.book_source.clone(), Some(url)).await?;
             let book_info = state.book_service.get_book_info(&source, url).await?;
             let toc_url = book_info.toc_url.as_deref().unwrap_or(url);
-            let chapters = state.book_service.get_chapter_list(&source, toc_url).await?;
+
+            // If refresh is requested, delete chapter list cache first
+            if do_refresh {
+                let _ = state.book_service.delete_chapter_list_cache(&user_ns, toc_url).await;
+            }
+
+            let chapters = state.book_service.get_chapter_list_with_cache(&user_ns, &source, toc_url, do_refresh).await?;
             let idx = req.index.unwrap() as usize;
             if idx >= chapters.len() {
                 return Err(AppError::BadRequest("chapter index out of range".to_string()));
@@ -472,6 +483,12 @@ pub async fn get_book_content(State(state): State<AppState>, Query(access_q): Qu
     println!("DEBUG: get_book_content resolved chapter_url: {}", chapter_url);
     let source = resolve_book_source(&state, &user_ns, req.book_source_url, req.book_source, Some(&chapter_url)).await?;
     let cache_key = format!("chapter:{}", md5_hex(&chapter_url));
+
+    // If refresh is requested, delete content cache before fetching
+    if do_refresh {
+        let _ = state.book_service.delete_cache(&user_ns, &cache_key).await;
+    }
+
     let content = state.book_service.get_content(&user_ns, &source, &chapter_url, &cache_key).await?;
     Ok(Json(ApiResponse::ok(serde_json::Value::String(content))))
 }
