@@ -365,6 +365,15 @@ impl BookService {
         Ok(())
     }
 
+    pub async fn cache_exists(&self, user_ns: &str, cache_key: &str) -> bool {
+        self.cache.exists(user_ns, cache_key).await
+    }
+
+    pub async fn chapter_list_cache_exists(&self, user_ns: &str, toc_url: &str) -> bool {
+        let path = self.chapter_list_cache_path(user_ns, toc_url);
+        path.exists()
+    }
+
     pub async fn get_bookshelf(&self, user_ns: &str) -> Result<Vec<Book>, AppError> {
         self.read_bookshelf(user_ns).await
     }
@@ -655,6 +664,14 @@ impl BookService {
         }
         self.save_chapter_list_cache(user_ns, toc_url, &existing).await?;
         Ok(existing)
+    }
+
+    pub async fn delete_chapter_list_cache(&self, user_ns: &str, toc_url: &str) -> Result<(), AppError> {
+        let path = self.chapter_list_cache_path(user_ns, toc_url);
+        if path.exists() {
+            fs::remove_file(&path).await.map_err(|e| AppError::Internal(e.into()))?;
+        }
+        Ok(())
     }
 }
 

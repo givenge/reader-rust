@@ -83,6 +83,9 @@ pub struct BookContentRequest {
 pub struct DeleteCacheRequest {
     #[serde(rename = "chapterUrl")]
     chapter_url: Option<String>,
+    url: Option<String>,
+    #[serde(rename = "bookUrl")]
+    book_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -474,27 +477,52 @@ pub async fn get_book_content(State(state): State<AppState>, Query(access_q): Qu
 }
 
 pub async fn delete_book_cache(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<DeleteCacheRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    println!("DEBUG: delete_book_cache handler reached: q={:?}, body_len={}", q, body.len());
     let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
-    
+
     let mut req = q;
     if !body.is_empty() {
         if let Ok(v) = serde_json::from_slice::<DeleteCacheRequest>(&body) {
-            req = v;
+            // Merge with query params
+            if req.chapter_url.is_none() { req.chapter_url = v.chapter_url; }
+            if req.url.is_none() { req.url = v.url; }
+            if req.book_url.is_none() { req.book_url = v.book_url; }
         } else if let Ok(s) = std::str::from_utf8(&body) {
             for (k, v) in url::form_urlencoded::parse(s.as_bytes()) {
                 match k.as_ref() {
                     "chapterUrl" => req.chapter_url = Some(v.into_owned()),
+                    "url" => req.url = Some(v.into_owned()),
+                    "bookUrl" => req.book_url = Some(v.into_owned()),
                     _ => {}
                 }
             }
         }
     }
 
-    let chapter_url = req.chapter_url.ok_or_else(|| AppError::BadRequest("chapterUrl required".to_string()))?;
-    let cache_key = format!("chapter:{}", md5_hex(&chapter_url));
-    state.book_service.delete_cache(&user_ns, &cache_key).await?;
-    Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": true}))))
+    // Support chapterUrl, url, and bookUrl parameters
+    let url = req.chapter_url.or(req.url).or(req.book_url)
+        .ok_or_else(|| AppError::BadRequest("chapterUrl required".to_string()))?;
+
+    let mut deleted_content = false;
+    let mut deleted_chapter_list = false;
+
+    // Try to delete chapter content cache
+    let cache_key = format!("chapter:{}", md5_hex(&url));
+    if state.book_service.cache_exists(&user_ns, &cache_key).await {
+        state.book_service.delete_cache(&user_ns, &cache_key).await?;
+        deleted_content = true;
+    }
+
+    // Try to delete chapter list cache (using URL as toc_url)
+    if state.book_service.chapter_list_cache_exists(&user_ns, &url).await {
+        state.book_service.delete_chapter_list_cache(&user_ns, &url).await?;
+        deleted_chapter_list = true;
+    }
+
+    Ok(Json(ApiResponse::ok(serde_json::json!({
+        "deleted": true,
+        "contentCache": deleted_content,
+        "chapterListCache": deleted_chapter_list
+    }))))
 }
 
 pub async fn get_bookshelf(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
