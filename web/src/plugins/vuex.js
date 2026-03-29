@@ -173,17 +173,22 @@ export default new Vuex.Store({
       );
     },
     setConfig(state, config) {
-      delete config.name;
-      delete config.configDefaultType;
-      if (
-        config.theme !== settings.defaultNightTheme &&
-        config.theme !== "custom"
-      ) {
-        config.themeType = "day";
-      } else if (config.theme === settings.defaultNightTheme) {
-        config.themeType = "night";
-      }
-      state.config = config;
+    delete config.name;
+    delete config.configDefaultType;
+    // 只在明确设置主题且不是自定义主题时才自动判断 themeType
+    if (
+      config.theme !== settings.defaultNightTheme &&
+      config.theme !== "custom" &&
+      typeof config.themeType === "undefined"
+    ) {
+      config.themeType = "day";
+    } else if (
+      config.theme === settings.defaultNightTheme &&
+      typeof config.themeType === "undefined"
+    ) {
+      config.themeType = "night";
+    }
+    state.config = config;
       // 同步设置到 customConfig
       if (config.customConfig) {
         const index = state.customConfigList.findIndex(

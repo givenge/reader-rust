@@ -1556,9 +1556,11 @@ export default {
       }
     },
     toShelf() {
-      this.$router.push("/");
-    },
-    computePages(cb) {
+    // 完全替换当前页面，清空所有历史记录
+    // 使用 location.replace 可以避免创建新的历史记录
+    window.location.replace('/');
+  },
+  computePages(cb) {
       if (!this.$refs.bookContentRef || !this.$refs.bookContentRef.$el) {
         setTimeout(() => {
           this.computePages(cb);
