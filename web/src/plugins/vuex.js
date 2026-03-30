@@ -318,6 +318,8 @@ export default new Vuex.Store({
       }
       config = { ...config, ...themeConfig };
       config.customConfig = themeConfig.name;
+      // 显式设置 themeType，确保日/夜模式正确
+      config.themeType = isNight ? "night" : "day";
       // let config = { ...state.config };
       // if (config.theme !== "custom") {
       //   config.theme = parseInt(config.theme);
