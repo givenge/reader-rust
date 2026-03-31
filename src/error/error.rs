@@ -29,9 +29,6 @@ impl<T> ApiResponse<T> {
     pub fn ok(data: T) -> Self {
         Self { is_success: true, error_msg: "".to_string(), data: Some(data) }
     }
-    pub fn ok_empty() -> Self {
-        Self { is_success: true, error_msg: "".to_string(), data: None }
-    }
     pub fn err(message: impl Into<String>) -> Self {
         Self { is_success: false, error_msg: message.into(), data: None }
     }

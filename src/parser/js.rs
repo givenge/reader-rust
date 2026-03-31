@@ -11,10 +11,6 @@ pub fn eval_js(script: &str, input: &str, base_url: &str) -> anyhow::Result<Stri
     eval_js_inner(script, Some(input), Some(base_url), None, None)
 }
 
-pub fn eval_js_search(script: &str, key: &str, page: i32) -> anyhow::Result<String> {
-    eval_js_inner(script, None, None, Some(key), Some(page))
-}
-
 pub fn eval_js_search_with_source(script: &str, key: &str, page: i32, source_key: &str) -> anyhow::Result<String> {
     eval_js_inner_with_source(script, None, None, Some(key), Some(page), Some(source_key))
 }
@@ -24,7 +20,6 @@ fn eval_js_inner(script: &str, input: Option<&str>, base_url: Option<&str>, key:
 }
 
 fn eval_js_inner_with_source(script: &str, input: Option<&str>, base_url: Option<&str>, key: Option<&str>, page: Option<i32>, source_key: Option<&str>) -> anyhow::Result<String> {
-    println!("DEBUG: eval_js_inner entry for script: {}", script);
     let rt = Runtime::new()?;
     let ctx = Context::full(&rt)?;
     ctx.with(|ctx| {
@@ -47,9 +42,7 @@ fn eval_js_inner_with_source(script: &str, input: Option<&str>, base_url: Option
 
         let cookie_obj = Object::new(ctx.clone())?;
         cookie_obj.set("removeCookie", Func::new(|_key: String| -> String { "".to_string() }))?;
-        globals.set("cookie", cookie_obj);
-
-        println!("DEBUG: eval_js script after stubs: {}", script);
+        globals.set("cookie", cookie_obj)?;
 
         globals.set("kv_get", Func::new(|key: String| -> Option<String> {
             let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
@@ -71,10 +64,8 @@ fn eval_js_inner_with_source(script: &str, input: Option<&str>, base_url: Option
             Ok(v) => v,
             Err(e) => {
                 if let Some(exception) = ctx.catch().into_exception() {
-                    println!("DEBUG: JS Exception: {:?}, script: {}", exception, script);
                     return Err(anyhow::anyhow!("JS Exception: {:?}", exception));
                 }
-                println!("DEBUG: JS eval failed: {:?}, script: {}", e, script);
                 return Err(e.into());
             }
         };

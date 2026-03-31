@@ -23,7 +23,7 @@ pub struct AccessTokenQuery {
     #[serde(rename = "secureKey")]
     pub secure_key: Option<String>,
     #[serde(rename = "userNS")]
-    pub user_ns: Option<String>,
+    pub _user_ns: Option<String>,
     #[serde(rename = "type")]
     pub file_type: Option<String>,
 }
@@ -54,7 +54,7 @@ pub struct DeleteFileRequest {
     pub url: Option<String>,
 }
 
-pub async fn login(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(req): Json<LoginRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
+pub async fn login(State(state): State<AppState>, Query(_q): Query<AccessTokenQuery>, Json(req): Json<LoginRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
     let username = req.username.unwrap_or_default();
     let password = req.password.unwrap_or_default();
     let is_login = req.is_login.unwrap_or(false);

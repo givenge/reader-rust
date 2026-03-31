@@ -45,6 +45,8 @@ pub fn build_router(state: AppState) -> Router {
         .route("/removeBookGroupMulti", post(handlers::remove_book_group_multi))
         .route("/reader3/saveBook", post(handlers::save_book))
         .route("/saveBook", post(handlers::save_book))
+        .route("/reader3/setBookSource", post(handlers::set_book_source))
+        .route("/setBookSource", post(handlers::set_book_source))
         .route("/reader3/deleteBook", post(handlers::delete_book))
         .route("/deleteBook", post(handlers::delete_book))
         .route("/reader3/deleteBooks", post(handlers::delete_books))

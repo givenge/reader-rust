@@ -84,7 +84,7 @@ pub async fn get_rss_articles(State(state): State<AppState>, Query(q): Query<Acc
     let page = req.page.unwrap_or(1).max(1);
 
     let list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
-    let rss_source = list.into_iter().find(|s| s.source_url == source_url).ok_or_else(|| AppError::BadRequest("RSS源不存在".to_string()))?;
+    let _rss_source = list.into_iter().find(|s| s.source_url == source_url).ok_or_else(|| AppError::BadRequest("RSS源不存在".to_string()))?;
 
     let res = state.book_service.http_client().get(&sort_url).send().await.map_err(|e| AppError::Internal(e.into()))?;
     let bytes = res.bytes().await.map_err(|e| AppError::Internal(e.into()))?;

@@ -20,12 +20,4 @@ impl StorageFs {
         fs::create_dir_all(&self.assets).await?;
         Ok(())
     }
-
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    pub fn assets(&self) -> &Path {
-        &self.assets
-    }
 }

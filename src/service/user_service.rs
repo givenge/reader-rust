@@ -316,6 +316,19 @@ impl UserService {
         Ok(Some(user.clone()))
     }
 
+    pub async fn require_webdav_user(&self, access_token: Option<&str>) -> Result<String, AppError> {
+        if !self.cfg.secure {
+            return Ok("default".to_string());
+        }
+        let token = access_token.ok_or_else(|| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+        let user = self.check_auth(token).await?
+            .ok_or_else(|| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+        if !user.enable_webdav {
+            return Err(AppError::BadRequest("未开启webdav功能".to_string()));
+        }
+        Ok(user.username)
+    }
+
     async fn load_users(&self) -> Result<HashMap<String, User>, AppError> {
         if !self.users_path.exists() {
             return Ok(HashMap::new());

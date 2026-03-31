@@ -30,7 +30,7 @@ pub struct WebdavDeleteListRequest {
 }
 
 pub async fn get_webdav_file_list(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Query(req): Query<WebdavPathRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+    let user_ns = require_webdav_user_ns(&state, q.access_token.as_deref()).await?;
     let home = webdav_home(&state, &user_ns).await?;
     let path = req.path.unwrap_or_else(|| "/".to_string());
     let parts = normalize_rel_path(&path)?;
@@ -45,15 +45,15 @@ pub async fn get_webdav_file_list(State(state): State<AppState>, Query(q): Query
     let mut dir = fs::read_dir(full).await.map_err(|e| AppError::Internal(e.into()))?;
     while let Some(entry) = dir.next_entry().await.map_err(|e| AppError::Internal(e.into()))? {
         let meta = entry.metadata().await.map_err(|e| AppError::Internal(e.into()))?;
-        let file_path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with('.') {
             continue;
         }
+        let child_path = build_relative_path(&parts, &name);
         list.push(serde_json::json!({
             "name": name,
             "size": meta.len(),
-            "path": format!("/{}", parts.join("/")),
+            "path": child_path,
             "lastModified": meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(now_ts()),
             "isDirectory": meta.is_dir()
         }));
@@ -62,7 +62,7 @@ pub async fn get_webdav_file_list(State(state): State<AppState>, Query(q): Query
 }
 
 pub async fn get_webdav_file(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Query(req): Query<WebdavPathRequest>) -> Result<Response, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+    let user_ns = require_webdav_user_ns(&state, q.access_token.as_deref()).await?;
     let home = webdav_home(&state, &user_ns).await?;
     let path = req.path.unwrap_or_default();
     if path.is_empty() {
@@ -78,7 +78,7 @@ pub async fn get_webdav_file(State(state): State<AppState>, Query(q): Query<Acce
 }
 
 pub async fn upload_file_to_webdav(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, mut multipart: Multipart) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+    let user_ns = require_webdav_user_ns(&state, q.access_token.as_deref()).await?;
     let home = webdav_home(&state, &user_ns).await?;
     let mut file_list = Vec::new();
     let mut path = "/".to_string();
@@ -112,7 +112,7 @@ pub async fn upload_file_to_webdav(State(state): State<AppState>, Query(q): Quer
 }
 
 pub async fn delete_webdav_file(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(req): Json<WebdavPathRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+    let user_ns = require_webdav_user_ns(&state, q.access_token.as_deref()).await?;
     let home = webdav_home(&state, &user_ns).await?;
     let path = req.path.unwrap_or_default();
     if path.is_empty() {
@@ -132,7 +132,7 @@ pub async fn delete_webdav_file(State(state): State<AppState>, Query(q): Query<A
 }
 
 pub async fn delete_webdav_file_list(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(req): Json<WebdavDeleteListRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+    let user_ns = require_webdav_user_ns(&state, q.access_token.as_deref()).await?;
     let home = webdav_home(&state, &user_ns).await?;
     let paths = req.path.unwrap_or_default();
     for p in paths {
@@ -183,11 +183,8 @@ pub async fn webdav_handler(State(state): State<AppState>, headers: HeaderMap, m
     }
 }
 
-async fn resolve_user_ns(state: &AppState, access_token: Option<&str>, secure_key: Option<&str>) -> Result<String, AppError> {
-    match state.user_service.resolve_user_ns(access_token, secure_key).await {
-        Ok(ns) => Ok(ns),
-        Err(_) => Err(AppError::BadRequest("NEED_LOGIN".to_string())),
-    }
+async fn require_webdav_user_ns(state: &AppState, access_token: Option<&str>) -> Result<String, AppError> {
+    state.user_service.require_webdav_user(access_token).await
 }
 
 async fn resolve_webdav_user(state: &AppState, headers: &HeaderMap) -> Result<String, StatusCode> {
@@ -239,6 +236,14 @@ fn join_parts(home: &PathBuf, parts: &Vec<String>) -> PathBuf {
         p = p.join(part);
     }
     p
+}
+
+fn build_relative_path(parts: &[String], name: &str) -> String {
+    if parts.is_empty() {
+        format!("/{}", name)
+    } else {
+        format!("/{}/{}", parts.join("/"), name)
+    }
 }
 
 async fn webdav_propfind(full: &PathBuf, rel: &str) -> Response {

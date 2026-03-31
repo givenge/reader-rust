@@ -1,5 +1,5 @@
 use crate::model::{book::Book, book_chapter::BookChapter, book_source::BookSource, search::SearchBook};
-use crate::model::rule::{SearchRule, ExploreRule, BookInfoRule, TocRule};
+use crate::model::rule::{SearchRule, BookInfoRule, TocRule};
 use crate::parser::{html, jsonpath, js::eval_js};
 use crate::util::text::apply_regex_replace;
 use serde_json::Value;
@@ -15,7 +15,6 @@ enum ParseMode {
     JsonPath, // JSONPath expression
     Regex,    // Regex pattern
     Js,       // JavaScript
-    Auto,     // Auto-detect based on content/rule
 }
 
 impl RuleEngine {
@@ -269,9 +268,6 @@ impl RuleEngine {
     fn search_books_xpath(&self, source: &BookSource, body: &str, base_url: &str, rule: &SearchRule) -> Vec<SearchBook> {
         // For XPath, we need to get list of items and then extract fields
         // This is a simplified implementation
-        let list_rule = rule.book_list.as_deref().unwrap_or("");
-        let items = html::select_xpath(body, self.strip_mode_prefix(list_rule));
-
         // For now, return empty as full XPath element selection needs more work
         // Fall back to HTML parsing
         self.search_books_html(source, body, base_url, rule)
@@ -614,10 +610,6 @@ fn eval_field_html_with_ctx(rule: &str, el: &scraper::ElementRef, base_url: &str
     }
 
     if text.is_empty() { None } else { Some(text) }
-}
-
-fn eval_field_html_doc(rule: &str, doc: &scraper::Html, base_url: &str) -> Option<String> {
-    eval_field_html_doc_with_ctx(rule, doc, base_url, &mut HashMap::new())
 }
 
 fn eval_field_html_doc_with_ctx(rule: &str, doc: &scraper::Html, base_url: &str, ctx: &mut HashMap<String, String>) -> Option<String> {

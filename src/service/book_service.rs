@@ -7,7 +7,6 @@ use crate::storage::cache::file_cache::FileCache;
 use tokio::fs;
 use std::path::PathBuf;
 use urlencoding::encode;
-use crate::util::time::now_ts;
 use crate::util::hash::md5_hex;
 
 /// State for background chapter fetching
@@ -381,12 +380,6 @@ impl BookService {
         self.cache.remove_book(user_ns, &book_key).await.map_err(|e| AppError::Internal(e.into()))
     }
 
-    /// Check if any cache exists for a book
-    pub async fn book_cache_exists(&self, user_ns: &str, book_url: &str) -> bool {
-        let book_key = md5_hex(book_url);
-        self.cache.book_cache_exists(user_ns, &book_key)
-    }
-
     /// Check if a specific chapter is cached
     pub async fn is_chapter_cached(&self, user_ns: &str, book_url: &str, chapter_url: &str) -> bool {
         let book_key = md5_hex(book_url);
@@ -541,29 +534,6 @@ impl BookService {
             self.write_bookshelf(user_ns, &list).await?;
         }
         Ok(deleted)
-    }
-
-    pub async fn save_book_progress(&self, user_ns: &str, book_url: &str, chapter_index: i32, chapter_title: Option<String>, chapter_pos: Option<i32>) -> Result<Option<Book>, AppError> {
-        let mut list = self.read_bookshelf(user_ns).await?;
-        let mut updated: Option<Book> = None;
-        for b in list.iter_mut() {
-            if b.book_url == book_url {
-                b.dur_chapter_index = Some(chapter_index);
-                b.dur_chapter_time = Some(now_ts());
-                if let Some(title) = chapter_title {
-                    b.dur_chapter_title = Some(title);
-                }
-                if let Some(pos) = chapter_pos {
-                    b.dur_chapter_pos = Some(pos);
-                }
-                updated = Some(b.clone());
-                break;
-            }
-        }
-        if let Some(ref _b) = updated {
-            self.write_bookshelf(user_ns, &list).await?;
-        }
-        Ok(updated)
     }
 
     pub async fn cached_chapter_count(&self, user_ns: &str, book_url: &str, chapter_urls: &[String]) -> Result<usize, AppError> {

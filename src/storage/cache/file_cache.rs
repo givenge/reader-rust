@@ -58,12 +58,6 @@ impl FileCache {
         }
     }
 
-    /// Check if any cache exists for a book
-    pub fn book_cache_exists(&self, user_ns: &str, book_key: &str) -> bool {
-        let path = self.book_path(user_ns, book_key);
-        path.exists()
-    }
-
     /// Get the directory path for a book's cache
     fn book_path(&self, user_ns: &str, book_key: &str) -> PathBuf {
         self.root.join(user_ns).join(book_key)
