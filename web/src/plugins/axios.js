@@ -17,7 +17,19 @@ store.watch(
 );
 
 service.interceptors.request.use(
-  config => config,
+  config => {
+    config.headers = config.headers || {};
+    if (store.state.token) {
+      config.headers.Authorization = `Bearer ${store.state.token}`;
+    }
+    if (store.state.isManagerMode && store.state.secureKey) {
+      config.headers["X-Secure-Key"] = store.state.secureKey;
+      if (store.state.userNS) {
+        config.headers["X-User-NS"] = store.state.userNS;
+      }
+    }
+    return config;
+  },
   error => {
     // console.log(error); // for debug
     return Promise.reject(error);
@@ -47,13 +59,6 @@ export const request = async ({
   // post 默认显示返回的信息
   if (alert === undefined) {
     alert = method === "post";
-  }
-  if (store.state.token) {
-    params.accessToken = store.state.token;
-  }
-  if (store.state.isManagerMode && store.state.secureKey) {
-    params.secureKey = store.state.secureKey;
-    params.userNS = store.state.userNS;
   }
   // 防止 ie 缓存 GET 请求
   params.v = new Date().getTime();
@@ -108,7 +113,6 @@ export const request = async ({
           "操作确认"
         );
         if (result && result.action === "confirm" && result.value) {
-          params.secureKey = result.value;
           store.commit("setSecureKey", result.value);
           return await request({
             url,

@@ -1,5 +1,6 @@
 pub mod router;
 pub mod handlers;
+pub mod auth;
 
 use std::sync::Arc;
 use crate::app::config::AppConfig;

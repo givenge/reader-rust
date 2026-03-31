@@ -1,21 +1,14 @@
-use axum::{extract::{State, Query}, Json};
+use axum::{extract::State, Json};
 use serde::Deserialize;
 use serde_json::Value;
 use crate::api::AppState;
+use crate::api::auth::AuthContext;
 
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::rss::{RssSource, RssArticle};
 use crate::util::time::now_ts;
 use tokio::fs;
 use std::path::PathBuf;
-
-#[derive(Debug, Deserialize)]
-pub struct AccessTokenQuery {
-    #[serde(rename = "accessToken")]
-    pub access_token: Option<String>,
-    #[serde(rename = "secureKey")]
-    pub secure_key: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct RssArticlesRequest {
@@ -36,14 +29,14 @@ pub struct RssContentRequest {
     pub origin: Option<String>,
 }
 
-pub async fn get_rss_sources(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn get_rss_sources(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(list).unwrap_or_default())))
 }
 
-pub async fn save_rss_source(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(source): Json<RssSource>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn save_rss_source(State(state): State<AppState>, auth: AuthContext, Json(source): Json<RssSource>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     if source.source_url.is_empty() {
         return Err(AppError::BadRequest("RSS链接不能为空".to_string()));
     }
@@ -56,8 +49,8 @@ pub async fn save_rss_source(State(state): State<AppState>, Query(q): Query<Acce
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn save_rss_sources(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(mut sources): Json<Vec<RssSource>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn save_rss_sources(State(state): State<AppState>, auth: AuthContext, Json(mut sources): Json<Vec<RssSource>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let mut list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
     sources.retain(|s| !s.source_url.is_empty() && !s.source_name.is_empty());
     for s in sources {
@@ -67,16 +60,16 @@ pub async fn save_rss_sources(State(state): State<AppState>, Query(q): Query<Acc
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn delete_rss_source(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(source): Json<RssSource>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn delete_rss_source(State(state): State<AppState>, auth: AuthContext, Json(source): Json<RssSource>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let mut list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
     list.retain(|s| s.source_url != source.source_url);
     write_list(&state, &user_ns, "rssSources.json", &list).await?;
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn get_rss_articles(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, body: Option<Json<RssArticlesRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn get_rss_articles(State(state): State<AppState>, auth: AuthContext, body: Option<Json<RssArticlesRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let req = body.map(|b| b.0).unwrap_or(RssArticlesRequest { source_url: None, sort_name: None, sort_url: None, page: None });
     let source_url = req.source_url.ok_or_else(|| AppError::BadRequest("RSS源链接不能为空".to_string()))?;
     let sort_url = req.sort_url.unwrap_or_else(|| source_url.clone());
@@ -122,8 +115,8 @@ pub async fn get_rss_articles(State(state): State<AppState>, Query(q): Query<Acc
     Ok(Json(ApiResponse::ok(data)))
 }
 
-pub async fn get_rss_content(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, body: Option<Json<RssContentRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn get_rss_content(State(state): State<AppState>, auth: AuthContext, body: Option<Json<RssContentRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let req = body.map(|b| b.0).unwrap_or(RssContentRequest { source_url: None, link: None, origin: None });
     let source_url = req.source_url.ok_or_else(|| AppError::BadRequest("RSS链接不能为空".to_string()))?;
     let link = req.link.ok_or_else(|| AppError::BadRequest("RSS文章链接不能为空".to_string()))?;
@@ -137,8 +130,8 @@ pub async fn get_rss_content(State(state): State<AppState>, Query(q): Query<Acce
     Ok(Json(ApiResponse::ok(Value::String(body))))
 }
 
-async fn resolve_user_ns(state: &AppState, access_token: Option<&str>, secure_key: Option<&str>) -> Result<String, AppError> {
-    match state.user_service.resolve_user_ns(access_token, secure_key).await {
+async fn resolve_user_ns(state: &AppState, access_token: Option<&str>, secure_key: Option<&str>, user_ns: Option<&str>) -> Result<String, AppError> {
+    match state.user_service.resolve_user_ns_with_override(access_token, secure_key, user_ns).await {
         Ok(ns) => Ok(ns),
         Err(_) => Err(AppError::BadRequest("NEED_LOGIN".to_string())),
     }

@@ -1,9 +1,9 @@
 use axum::{extract::{State, Query}, Json};
 use serde::Deserialize;
 use crate::api::AppState;
+use crate::api::auth::AuthContext;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::book_source::BookSource;
-use crate::api::handlers::webdav::AccessTokenQuery;
 
 #[derive(Debug, Deserialize)]
 pub struct BookSourceUrlParam {
@@ -16,14 +16,14 @@ pub struct UsernameParam {
     pub username: Option<String>,
 }
 
-pub async fn save_book_source(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Json(source): Json<BookSource>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn save_book_source(State(state): State<AppState>, auth: AuthContext, Json(source): Json<BookSource>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     state.book_source_service.save(&user_ns, source).await?;
     Ok(Json(ApiResponse::ok(serde_json::json!({"saved": true}))))
 }
 
-pub async fn save_book_sources(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Json(payload): Json<serde_json::Value>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn save_book_sources(State(state): State<AppState>, auth: AuthContext, Json(payload): Json<serde_json::Value>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let sources = extract_sources(payload)?;
     if sources.is_empty() {
         return Err(AppError::BadRequest("empty book sources".to_string()));
@@ -33,8 +33,8 @@ pub async fn save_book_sources(State(state): State<AppState>, Query(access_q): Q
     Ok(Json(ApiResponse::ok(serde_json::json!({"saved": true, "count": count}))))
 }
 
-pub async fn get_book_source(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<BookSourceUrlParam>, body: Option<Json<BookSourceUrlParam>>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_book_source(State(state): State<AppState>, auth: AuthContext, Query(q): Query<BookSourceUrlParam>, body: Option<Json<BookSourceUrlParam>>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let url = q.book_source_url.or_else(|| body.map(|b| b.0.book_source_url).flatten());
     let url = url.ok_or_else(|| AppError::BadRequest("bookSourceUrl required".to_string()))?;
     let source = state.book_source_service.get(&user_ns, &url).await?
@@ -42,21 +42,21 @@ pub async fn get_book_source(State(state): State<AppState>, Query(access_q): Que
     Ok(Json(ApiResponse::ok(serde_json::to_value(source).unwrap_or_default())))
 }
 
-pub async fn get_book_sources(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_book_sources(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let list = state.book_source_service.list(&user_ns).await?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(list).unwrap_or_default())))
 }
 
-pub async fn delete_book_source(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Json(param): Json<BookSourceUrlParam>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn delete_book_source(State(state): State<AppState>, auth: AuthContext, Json(param): Json<BookSourceUrlParam>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let url = param.book_source_url.ok_or_else(|| AppError::BadRequest("bookSourceUrl required".to_string()))?;
     state.book_source_service.delete(&user_ns, &url).await?;
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": true}))))
 }
 
-pub async fn delete_book_sources(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Json(list): Json<Vec<BookSourceUrlParam>>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn delete_book_sources(State(state): State<AppState>, auth: AuthContext, Json(list): Json<Vec<BookSourceUrlParam>>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     for item in list {
         if let Some(url) = item.book_source_url {
             state.book_source_service.delete(&user_ns, &url).await?;
@@ -65,8 +65,8 @@ pub async fn delete_book_sources(State(state): State<AppState>, Query(access_q):
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": true}))))
 }
 
-pub async fn delete_all_book_sources(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn delete_all_book_sources(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     state.book_source_service.delete_all(&user_ns).await?;
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": true}))))
 }
@@ -163,11 +163,11 @@ pub async fn read_source_file(
 
 pub async fn set_as_default_book_sources(
     State(state): State<AppState>,
-    Query(access_q): Query<AccessTokenQuery>,
+    auth: AuthContext,
     Json(param): Json<UsernameParam>,
 ) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     // Check if admin
-    let is_admin = state.user_service.is_admin(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await?;
+    let is_admin = state.user_service.is_admin(auth.access_token(), auth.secure_key()).await?;
     if !is_admin {
         return Ok(Json(ApiResponse::err_with_data("请输入管理密码", serde_json::Value::String("NEED_SECURE_KEY".to_string()))));
     }

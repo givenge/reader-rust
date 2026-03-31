@@ -7,7 +7,7 @@ use axum::http::{StatusCode, header};
 use serde::Deserialize;
 use serde_json::Value;
 use crate::api::AppState;
-use crate::api::handlers::webdav::AccessTokenQuery;
+use crate::api::auth::AuthContext;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::{book::Book, book_source::BookSource};
 use std::convert::Infallible;
@@ -177,8 +177,8 @@ pub struct SetBookSourceRequest {
     book_source_url: Option<String>,
 }
 
-pub async fn search_book(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<SearchBookRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn search_book(State(state): State<AppState>, auth: AuthContext, Query(q): Query<SearchBookRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     
     let mut req = q;
     if !body.is_empty() {
@@ -206,8 +206,8 @@ pub async fn search_book(State(state): State<AppState>, Query(access_q): Query<A
     Ok(Json(ApiResponse::ok(serde_json::to_value(books).unwrap_or_default())))
 }
 
-pub async fn search_book_multi(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<SearchBookMultiRequest>, body: Option<Json<SearchBookMultiRequest>>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn search_book_multi(State(state): State<AppState>, auth: AuthContext, Query(q): Query<SearchBookMultiRequest>, body: Option<Json<SearchBookMultiRequest>>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let key = req.key.ok_or_else(|| AppError::BadRequest("key required".to_string()))?;
     let page = req.page.unwrap_or(1);
@@ -294,8 +294,8 @@ fn merge_search_results(results: Vec<crate::model::search::SearchBook>) -> Vec<c
     result
 }
 
-pub async fn explore_book(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<ExploreBookRequest>, body: Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn explore_book(State(state): State<AppState>, auth: AuthContext, Query(q): Query<ExploreBookRequest>, body: Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let mut req = q;
     if !body.is_empty() {
         if let Ok(v) = serde_json::from_slice::<ExploreBookRequest>(&body) {
@@ -326,8 +326,8 @@ pub async fn explore_book(State(state): State<AppState>, Query(access_q): Query<
     Ok(Json(ApiResponse::ok(serde_json::to_value(list).unwrap_or_default())))
 }
 
-pub async fn get_book_info(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<BookInfoRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_book_info(State(state): State<AppState>, auth: AuthContext, Query(q): Query<BookInfoRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     
     let mut req = q;
     if !body.is_empty() {
@@ -350,8 +350,8 @@ pub async fn get_book_info(State(state): State<AppState>, Query(access_q): Query
     Ok(Json(ApiResponse::ok(serde_json::to_value(book).unwrap_or_default())))
 }
 
-pub async fn get_chapter_list(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<ChapterListRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_chapter_list(State(state): State<AppState>, auth: AuthContext, Query(q): Query<ChapterListRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
 
     let mut req = q;
     if !body.is_empty() {
@@ -424,8 +424,8 @@ pub async fn get_chapter_list(State(state): State<AppState>, Query(access_q): Qu
     Ok(Json(ApiResponse::ok(serde_json::to_value(chapters).unwrap_or_default())))
 }
 
-pub async fn get_book_content(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<BookContentRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_book_content(State(state): State<AppState>, auth: AuthContext, Query(q): Query<BookContentRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
 
     let mut req = q;
     if !body.is_empty() {
@@ -495,8 +495,8 @@ pub async fn get_book_content(State(state): State<AppState>, Query(access_q): Qu
     Ok(Json(ApiResponse::ok(serde_json::Value::String(content))))
 }
 
-pub async fn delete_book_cache(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<DeleteCacheRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn delete_book_cache(State(state): State<AppState>, auth: AuthContext, Query(q): Query<DeleteCacheRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
 
     let mut req = q;
     if !body.is_empty() {
@@ -539,14 +539,14 @@ pub async fn delete_book_cache(State(state): State<AppState>, Query(access_q): Q
     }))))
 }
 
-pub async fn get_bookshelf(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_bookshelf(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let list = state.book_service.get_bookshelf(&user_ns).await?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(list).unwrap_or_default())))
 }
 
-pub async fn save_book(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>, Json(mut book): Json<Book>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn save_book(State(state): State<AppState>, auth: AuthContext, Json(mut book): Json<Book>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     if book.book_url.trim().is_empty() {
         return Err(AppError::BadRequest("bookUrl required".to_string()));
     }
@@ -568,13 +568,13 @@ pub async fn save_book(State(state): State<AppState>, Query(access_q): Query<Acc
 
 pub async fn set_book_source(
     State(state): State<AppState>,
-    Query(access_q): Query<AccessTokenQuery>,
+    auth: AuthContext,
     Query(q): Query<SetBookSourceRequest>,
     body: Bytes,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = state
         .user_service
-        .resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref())
+        .resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns())
         .await
         .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
 
@@ -669,8 +669,8 @@ pub async fn set_book_source(
     )))
 }
 
-pub async fn delete_book(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>, Json(book): Json<Book>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn delete_book(State(state): State<AppState>, auth: AuthContext, Json(book): Json<Book>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let deleted = state.book_service.delete_book(&user_ns, &book).await?;
     if !deleted {
         return Err(AppError::BadRequest("书架书籍不存在".to_string()));
@@ -678,14 +678,14 @@ pub async fn delete_book(State(state): State<AppState>, Query(access_q): Query<A
     Ok(Json(ApiResponse::ok(serde_json::json!("删除书籍成功"))))
 }
 
-pub async fn delete_books(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>, Json(books): Json<Vec<Book>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn delete_books(State(state): State<AppState>, auth: AuthContext, Json(books): Json<Vec<Book>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let count = state.book_service.delete_books(&user_ns, books).await?;
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": count}))))
 }
 
-pub async fn save_book_progress(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<SaveBookProgressRequest>, body: Option<Json<SaveBookProgressRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn save_book_progress(State(state): State<AppState>, auth: AuthContext, Query(q): Query<SaveBookProgressRequest>, body: Option<Json<SaveBookProgressRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let book_url = req.url
         .or(req.book_url)
@@ -722,8 +722,8 @@ pub async fn save_book_progress(State(state): State<AppState>, Query(access_q): 
     Ok(Json(ApiResponse::ok(serde_json::json!(""))))
 }
 
-pub async fn get_shelf_book(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<GetShelfBookRequest>, body: Option<Json<GetShelfBookRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_shelf_book(State(state): State<AppState>, auth: AuthContext, Query(q): Query<GetShelfBookRequest>, body: Option<Json<GetShelfBookRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let url = req.url.ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
     let book = state.book_service.get_shelf_book(&user_ns, &url).await?
@@ -731,8 +731,8 @@ pub async fn get_shelf_book(State(state): State<AppState>, Query(access_q): Quer
     Ok(Json(ApiResponse::ok(serde_json::to_value(book).unwrap_or_default())))
 }
 
-pub async fn get_shelf_book_with_cache_info(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_shelf_book_with_cache_info(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let books = state.book_service.get_bookshelf(&user_ns).await?;
     let mut result: Vec<Value> = Vec::with_capacity(books.len());
     for book in books {
@@ -772,8 +772,8 @@ pub async fn get_book_cover(State(state): State<AppState>, Query(q): Query<Cover
     }
 }
 
-pub async fn get_invalid_book_sources(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_invalid_book_sources(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let path = std::path::PathBuf::from(&state.config.storage_dir)
         .join("cache")
         .join("invalid_book_sources")
@@ -790,8 +790,8 @@ pub async fn get_invalid_book_sources(State(state): State<AppState>, Query(acces
     }
 }
 
-pub async fn cache_book_sse(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<CacheBookRequest>, body: Option<Json<CacheBookRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn cache_book_sse(State(state): State<AppState>, auth: AuthContext, Query(q): Query<CacheBookRequest>, body: Option<Json<CacheBookRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let book_url = req.url.or(req.book_url).ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
     let refresh = req.refresh.unwrap_or(0) > 0;
@@ -852,8 +852,8 @@ pub async fn cache_book_sse(State(state): State<AppState>, Query(access_q): Quer
     }))))
 }
 
-pub async fn search_book_multi_sse(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<SearchBookMultiSseRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn search_book_multi_sse(State(state): State<AppState>, auth: AuthContext, Query(q): Query<SearchBookMultiSseRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let key = q.key.unwrap_or_default();
     let last_index = q.last_index.unwrap_or(-1);
     let search_size = q.search_size.unwrap_or(50).max(1) as usize;
@@ -964,8 +964,8 @@ pub async fn search_book_multi_sse(State(state): State<AppState>, Query(access_q
     Ok(Sse::new(ReceiverStream::new(rx).map(Ok)))
 }
 
-pub async fn search_book_source_sse(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<SearchBookSourceSseRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn search_book_source_sse(State(state): State<AppState>, auth: AuthContext, Query(q): Query<SearchBookSourceSseRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let book_url = q.url.unwrap_or_default();
     let last_index = q.last_index.unwrap_or(-1);
     let search_size = q.search_size.unwrap_or(30).max(1) as usize;
@@ -1064,8 +1064,8 @@ pub async fn search_book_source_sse(State(state): State<AppState>, Query(access_
     Ok(Sse::new(ReceiverStream::new(rx).map(Ok)))
 }
 
-pub async fn get_available_book_source(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<GetAvailableBookSourceRequest>, body: Option<Json<GetAvailableBookSourceRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_available_book_source(State(state): State<AppState>, auth: AuthContext, Query(q): Query<GetAvailableBookSourceRequest>, body: Option<Json<GetAvailableBookSourceRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let refresh = req.refresh.unwrap_or(0) > 0;
 
@@ -1129,8 +1129,8 @@ pub async fn get_available_book_source(State(state): State<AppState>, Query(acce
     Ok(Json(ApiResponse::ok(serde_json::to_value(result).unwrap_or_default())))
 }
 
-pub async fn book_source_debug_sse(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<BookSourceDebugRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn book_source_debug_sse(State(state): State<AppState>, auth: AuthContext, Query(q): Query<BookSourceDebugRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let book_source_url = q.book_source_url.unwrap_or_default();
     let keyword = q.keyword.unwrap_or_default();
 

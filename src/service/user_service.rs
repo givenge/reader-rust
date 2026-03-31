@@ -255,12 +255,18 @@ impl UserService {
         Ok(false)
     }
 
-    pub async fn resolve_user_ns(&self, access_token: Option<&str>, secure_key: Option<&str>) -> Result<String, AppError> {
+    pub async fn resolve_user_ns_with_override(&self, access_token: Option<&str>, secure_key: Option<&str>, user_ns: Option<&str>) -> Result<String, AppError> {
         if !self.cfg.secure {
             return Ok("default".to_string());
         }
         if let Some(key) = secure_key {
             if self.secure_key_matches(key) {
+                if let Some(ns) = user_ns {
+                    let ns = ns.trim();
+                    if !ns.is_empty() {
+                        return Ok(ns.to_string());
+                    }
+                }
                 return Ok("default".to_string());
             }
         }
