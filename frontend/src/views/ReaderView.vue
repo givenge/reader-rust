@@ -1,6 +1,7 @@
 <template>
   <div
     class="reader-view"
+    :class="{ 'disable-system-callout': disableSystemCallout }"
     :style="{
       background: theme.body,
       color: theme.fontColor,
@@ -8,6 +9,7 @@
       '--color-primary': '#c97f3a'
     }"
     @click="handleBackgroundClick"
+    @contextmenu.prevent="handleContextMenu"
   >
     <!-- Left Drawer Panels -->
     <Teleport to="body">
@@ -310,6 +312,7 @@ const isContinuousMode = computed(() =>
   config.value.readMethod === '上下滚动' || config.value.readMethod === '上下滚动2',
 )
 const isHorizontalPageMode = computed(() => config.value.readMethod === '左右翻页')
+const disableSystemCallout = computed(() => isMobile.value && config.value.selectAction === 'popup')
 const isHorizontalAtEnd = ref(false)
 const selectionMenu = ref({
   visible: false,
@@ -958,6 +961,11 @@ function handleBackgroundClick(e: Event) {
     showControls.value = false
     stopAutoScroll()
   }
+}
+
+function handleContextMenu(event: Event) {
+  if (!disableSystemCallout.value) return
+  event.preventDefault()
 }
 
 function handleGlobalClick(e: MouseEvent) {
@@ -1753,6 +1761,12 @@ watch(() => store.isSpeaking, (speaking) => {
   position: relative;
   overflow: hidden;
   transition: background 0.3s, color 0.3s;
+}
+
+.reader-view.disable-system-callout .chapter-text,
+.reader-view.disable-system-callout .horizontal-page-content,
+.reader-view.disable-system-callout .continuous-reading {
+  -webkit-touch-callout: none;
 }
 
 .reader-scroll-container {
