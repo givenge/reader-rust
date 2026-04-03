@@ -1,4 +1,5 @@
 use axum::{extract::State, Json};
+use axum::extract::Multipart;
 use serde::Deserialize;
 use serde_json::Value;
 use crate::api::AppState;
@@ -9,6 +10,11 @@ use crate::model::rss::{RssSource, RssArticle};
 use crate::util::time::now_ts;
 use tokio::fs;
 use std::path::PathBuf;
+
+#[derive(Debug, Deserialize)]
+pub struct RemoteRssSourceParam {
+    url: String,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct RssArticlesRequest {
@@ -66,6 +72,60 @@ pub async fn delete_rss_source(State(state): State<AppState>, auth: AuthContext,
     list.retain(|s| s.source_url != source.source_url);
     write_list(&state, &user_ns, "rssSources.json", &list).await?;
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
+}
+
+pub async fn read_remote_rss_source_file(
+    Json(param): Json<RemoteRssSourceParam>,
+) -> Result<Json<ApiResponse<Vec<String>>>, AppError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let text = client.get(&param.url)
+        .send().await
+        .map_err(|e| AppError::BadRequest(format!("网络请求失败: {}", e)))?
+        .text().await
+        .map_err(|e| AppError::BadRequest(format!("读取响应失败: {}", e)))?;
+
+    let sources: Vec<RssSource> = serde_json::from_str(&text)
+        .or_else(|_| {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                extract_rss_sources(v)
+            } else {
+                Err(AppError::BadRequest("invalid rss sources json format".to_string()))
+            }
+        })?;
+
+    let json_str = serde_json::to_string(&sources)
+        .map_err(|e| AppError::BadRequest(format!("序列化RSS源失败: {}", e)))?;
+
+    Ok(Json(ApiResponse::ok(vec![json_str])))
+}
+
+pub async fn read_rss_source_file(
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, AppError> {
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+        if let Some(file_name) = field.file_name() {
+            if file_name.ends_with(".json") || file_name.ends_with(".txt") {
+                let bytes = field.bytes().await.map_err(|e| AppError::BadRequest(e.to_string()))?;
+                let text = String::from_utf8_lossy(&bytes);
+                let sources: Vec<RssSource> = serde_json::from_str(&text)
+                    .or_else(|_| {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                            extract_rss_sources(v)
+                        } else {
+                            Err(AppError::BadRequest("invalid rss sources json format".to_string()))
+                        }
+                    })?;
+                return Ok(Json(serde_json::to_value(sources).unwrap_or_default()));
+            }
+        }
+    }
+    Err(AppError::BadRequest("No json file uploaded".to_string()))
 }
 
 pub async fn get_rss_articles(State(state): State<AppState>, auth: AuthContext, body: Option<Json<RssArticlesRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
@@ -154,6 +214,24 @@ async fn write_list<T: serde::Serialize>(state: &AppState, user_ns: &str, name: 
     let data = serde_json::to_string(list).map_err(|e| AppError::BadRequest(e.to_string()))?;
     fs::write(path, data).await.map_err(|e| AppError::Internal(e.into()))?;
     Ok(())
+}
+
+fn extract_rss_sources(payload: serde_json::Value) -> Result<Vec<RssSource>, AppError> {
+    if payload.is_array() {
+        return serde_json::from_value::<Vec<RssSource>>(payload)
+            .map_err(|e| AppError::BadRequest(e.to_string()));
+    }
+    if let Some(obj) = payload.as_object() {
+        for key in ["rssSources", "rssSourceList", "data", "sources"] {
+            if let Some(v) = obj.get(key) {
+                if v.is_array() {
+                    return serde_json::from_value::<Vec<RssSource>>(v.clone())
+                        .map_err(|e| AppError::BadRequest(e.to_string()));
+                }
+            }
+        }
+    }
+    Err(AppError::BadRequest("invalid rss sources payload".to_string()))
 }
 
 fn upsert_by_key<T, F>(list: &mut Vec<T>, item: T, key_fn: F)

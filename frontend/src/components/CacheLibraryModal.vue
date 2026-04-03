@@ -27,6 +27,21 @@
           </div>
 
           <div v-else class="cache-list">
+            <div class="cache-toolbar">
+              <div class="cache-scope">
+                <span class="scope-label">默认缓存范围</span>
+                <div class="scope-options">
+                  <button class="scope-btn" :class="{ active: cacheCount === 50 }" @click="cacheCount = 50">50章</button>
+                  <button class="scope-btn" :class="{ active: cacheCount === 100 }" @click="cacheCount = 100">100章</button>
+                  <button class="scope-btn" :class="{ active: cacheCount === 0 }" @click="cacheCount = 0">全本</button>
+                </div>
+              </div>
+              <div class="cache-overview">
+                <span>可离线书籍 {{ offlineReadyCount }} 本</span>
+                <span>浏览器缓存章节 {{ totalBrowserCachedCount }} 章</span>
+              </div>
+            </div>
+
             <div v-for="item in mergedBooks" :key="item.bookUrl" class="cache-item">
               <div class="cache-main">
                 <h3>{{ item.name }}</h3>
@@ -37,8 +52,8 @@
                 </div>
               </div>
               <div class="cache-actions">
-                <button @click="cacheServer(item.book)">缓存到服务器</button>
-                <button @click="cacheBrowser(item.book)">缓存到浏览器</button>
+                <button @click="cacheServer(item.book)">{{ cacheActionLabel('服务器') }}</button>
+                <button @click="cacheBrowser(item.book)">{{ cacheActionLabel('浏览器') }}</button>
                 <button @click="clearServer(item.book)">清服务端</button>
                 <button @click="clearBrowser(item.book)">清浏览器</button>
               </div>
@@ -71,6 +86,7 @@ const emit = defineEmits<{
 const shelfStore = useBookshelfStore()
 const appStore = useAppStore()
 const loading = ref(false)
+const cacheCount = ref(50)
 const serverBooks = ref<Book[]>([])
 const browserSummaries = ref<Array<{ bookUrl: string; cachedChapterCount: number }>>([])
 
@@ -88,6 +104,9 @@ const mergedBooks = computed(() => {
   }))
 })
 
+const offlineReadyCount = computed(() => mergedBooks.value.filter((item) => item.browserCachedCount > 0).length)
+const totalBrowserCachedCount = computed(() => mergedBooks.value.reduce((sum, item) => sum + item.browserCachedCount, 0))
+
 watch(() => props.modelValue, (visible) => {
   if (visible) {
     refreshData()
@@ -96,6 +115,10 @@ watch(() => props.modelValue, (visible) => {
 
 function close() {
   emit('update:modelValue', false)
+}
+
+function cacheActionLabel(target: '服务器' | '浏览器') {
+  return cacheCount.value === 0 ? `缓存全本到${target}` : `缓存后续${cacheCount.value}章到${target}`
 }
 
 async function awaitSafeBrowserSummary() {
@@ -117,7 +140,7 @@ async function refreshData() {
 }
 
 function cacheServer(book: Book) {
-  const sse = cacheBookSSE({ bookUrl: book.bookUrl, count: 0, concurrentCount: 8 })
+  const sse = cacheBookSSE({ bookUrl: book.bookUrl, count: cacheCount.value, concurrentCount: 8 })
   sse.addEventListener('end', async () => {
     sse.close()
     appStore.showToast(`"${book.name}" 已缓存到服务器`, 'success')
@@ -131,7 +154,7 @@ function cacheServer(book: Book) {
 
 async function cacheBrowser(book: Book) {
   try {
-    await cacheBookToBrowser({ book, startIndex: 0 })
+    await cacheBookToBrowser({ book, startIndex: 0, count: cacheCount.value || undefined })
     appStore.showToast(`"${book.name}" 已缓存到浏览器`, 'success')
     await refreshData()
   } catch (error) {
@@ -242,6 +265,57 @@ async function clearBrowser(book: Book) {
   gap: 12px;
 }
 
+.cache-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--color-border-light);
+  border-radius: 18px;
+  background: var(--color-bg-sunken);
+}
+
+.cache-scope {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.scope-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.scope-options {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.scope-btn {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.scope-btn.active {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
+}
+
+.cache-overview {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
 .cache-item {
   display: flex;
   justify-content: space-between;
@@ -280,6 +354,11 @@ async function clearBrowser(book: Book) {
 }
 
 @media (max-width: 768px) {
+  .cache-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
   .cache-item {
     flex-direction: column;
   }

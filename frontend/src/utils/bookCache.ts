@@ -1,4 +1,4 @@
-import { getChapterList, getBookContent, deleteBookCache } from '../api/bookshelf'
+import { getChapterList, getBookContent } from '../api/bookshelf'
 import type { Book, BookChapter } from '../types'
 import { setBrowserCachedChapter } from './browserCache'
 
@@ -49,11 +49,6 @@ export async function cacheBookToBrowser(params: {
       chapterTitle: chapter.title,
     })
   }
-
-  if (!params.signal?.cancelled) {
-    await deleteBookCache(params.book.bookUrl).catch(() => undefined)
-  }
-
   return {
     total: sliced.length,
     completed,

@@ -33,6 +33,7 @@ export function getChapterList(params: {
   bookUrl?: string
   tocUrl?: string
   bookSourceUrl?: string
+  refresh?: number
 }) {
   return http.post<BookChapter[]>('/getChapterList', params).then((r) => r.data)
 }

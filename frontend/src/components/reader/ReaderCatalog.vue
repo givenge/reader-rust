@@ -17,9 +17,19 @@
           书签
         </div>
       </div>
-      <button class="close-btn" @click="store.closePanel()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
-      </button>
+      <div class="header-actions">
+        <button
+          v-if="activeTab === 'chapters'"
+          class="icon-btn"
+          :disabled="store.chaptersLoading"
+          @click="refreshCatalog"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" /></svg>
+        </button>
+        <button class="close-btn" @click="store.closePanel()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
     </div>
 
     <div v-if="activeTab === 'bookmarks'" class="bookmark-toolbar">
@@ -129,6 +139,11 @@ async function goToChapter(index: number) {
   store.closePanel()
 }
 
+async function refreshCatalog() {
+  await store.refreshChapters()
+  scrollToCurrent()
+}
+
 async function goToBookmark(bm: Bookmark) {
   if (bookmarkEditMode.value) {
     toggleBookmarkSelection(bm)
@@ -227,6 +242,7 @@ function formatDate(ts?: number) {
   border-bottom-color: var(--color-primary, #c97f3a);
 }
 
+.icon-btn,
 .close-btn {
   width: 32px;
   height: 32px;
@@ -239,6 +255,17 @@ function formatDate(ts?: number) {
   background: transparent;
   border: none;
   cursor: pointer;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .list-container {

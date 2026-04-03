@@ -1,6 +1,6 @@
 <template>
   <div id="app">
-    <AppHeader v-if="showHeader" @explore="router.push('/explore')" />
+    <AppHeader v-if="showHeader" @explore="router.push('/explore')" @rss="router.push('/rss')" />
     <router-view />
     <SettingsDrawer v-model="appStore.showSettingsDrawer" />
     <LoginModal v-model="appStore.showLoginModal" />

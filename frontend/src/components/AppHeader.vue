@@ -46,6 +46,15 @@
           <span class="btn-label">书海</span>
         </button>
 
+        <button class="header-btn" @click="handleRss" title="RSS">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M4 11a9 9 0 0 1 9 9" />
+            <path d="M4 4a16 16 0 0 1 16 16" />
+            <circle cx="5" cy="19" r="1" fill="currentColor" stroke="none" />
+          </svg>
+          <span class="btn-label">RSS</span>
+        </button>
+
         <button class="header-btn" @click="handleRefresh" :class="{ spinning: refreshing }" title="刷新">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
@@ -107,6 +116,7 @@ const refreshing = computed(() => shelfStore.refreshing)
 
 const emit = defineEmits<{
   explore: []
+  rss: []
 }>()
 
 function goHome() {
@@ -127,6 +137,10 @@ function clearSearch() {
 
 function handleExplore() {
   emit('explore')
+}
+
+function handleRss() {
+  emit('rss')
 }
 
 function handleRefresh() {

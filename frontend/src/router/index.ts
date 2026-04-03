@@ -18,6 +18,11 @@ const router = createRouter({
       name: 'explore',
       component: () => import('../views/ExploreView.vue'),
     },
+    {
+      path: '/rss',
+      name: 'rss',
+      component: () => import('../views/RssView.vue'),
+    },
   ],
 })
 

@@ -2,7 +2,16 @@ use serde_json::Value;
 
 pub fn jsonpath_query(value: &Value, rule: &str) -> Vec<Value> {
     if let Ok(res) = jsonpath_lib::select(value, rule) {
-        res.into_iter().cloned().collect()
+        let mut out = Vec::new();
+        for item in res {
+            match item {
+                Value::Array(items) => {
+                    out.extend(items.iter().cloned());
+                }
+                other => out.push(other.clone()),
+            }
+        }
+        out
     } else {
         vec![]
     }

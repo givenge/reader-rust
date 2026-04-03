@@ -504,6 +504,7 @@ export const useReaderStore = defineStore('reader', () => {
     book.value = b
     appStore.markBookOpened(b.bookUrl)
     currentIndex.value = b.durChapterIndex || 0
+    preloadedContent.value.clear()
     chaptersLoading.value = true
     try {
       chapters.value = await getChapterList({
@@ -688,6 +689,25 @@ export const useReaderStore = defineStore('reader', () => {
     }
   }
 
+  async function refreshChapters() {
+    if (!book.value) return
+    chaptersLoading.value = true
+    try {
+      preloadedContent.value.clear()
+      chapters.value = await getChapterList({
+        bookUrl: book.value.bookUrl,
+        bookSourceUrl: book.value.origin,
+        refresh: 1,
+      })
+      const targetIndex = Math.max(0, Math.min(chapters.value.length - 1, currentIndex.value))
+      if (chapters.value[targetIndex]) {
+        await loadChapter(targetIndex, true)
+      }
+    } finally {
+      chaptersLoading.value = false
+    }
+  }
+
   function setChapterScrollProgress(value: number) {
     chapterScrollProgress.value = Math.max(0, Math.min(1, value))
     saveReaderSession()
@@ -785,6 +805,7 @@ export const useReaderStore = defineStore('reader', () => {
     bookmarks, fetchBookmarks, addBookmark, removeBookmark, removeBookmarks,
     replaceRules, fetchReplaceRules,
     switchSource, preloadNextChapter, preloadAroundChapter,
+    refreshChapters,
     isSpeaking, isPaused, startTTS, pauseTTS, stopTTS,
     voiceList, speechConfig, speechStopAt, fetchVoices, setVoiceName, setSpeechRate, setSpeechPitch, setSpeechStopTimer, clearSpeechStopTimer,
     displayContent,

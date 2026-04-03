@@ -5,6 +5,17 @@ export function getBookSources() {
   return http.get<BookSource[]>('/getBookSources').then((r) => r.data)
 }
 
+export function loginBookSource(bookSourceUrl: string) {
+  return http.post<{
+    success: boolean
+    status: number
+    url: string
+    checkResult?: string | null
+    bodyPreview?: string
+    bodyHtml?: string
+  }>('/loginBookSource', { bookSourceUrl }).then((r) => r.data)
+}
+
 export function getBookSource(bookSourceUrl: string) {
   return http.post<BookSource>('/getBookSource', { bookSourceUrl }).then((r) => r.data)
 }

@@ -28,6 +28,8 @@ pub use rss::{
     get_rss_articles,
     get_rss_content,
     get_rss_sources,
+    read_remote_rss_source_file,
+    read_rss_source_file,
     save_rss_source,
     save_rss_sources,
 };
@@ -54,6 +56,7 @@ pub use webdav::{
     webdav_handler,
 };
 pub use book_group::*;
+pub use book_source::login_book_source;
 
 use axum::response::IntoResponse;
 use axum::Json;

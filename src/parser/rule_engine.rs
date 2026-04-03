@@ -1,8 +1,9 @@
 use crate::model::{book::Book, book_chapter::BookChapter, book_source::BookSource, search::SearchBook};
 use crate::model::rule::{SearchRule, BookInfoRule, TocRule};
 use crate::parser::{html, jsonpath, js::eval_js};
-use crate::util::text::apply_regex_replace;
+use crate::util::text::{apply_regex_replace, normalize_source_url};
 use serde_json::Value;
+use sxd_xpath::{Context as XPathContext, Factory as XPathFactory, Value as XPathValue};
 use std::collections::HashMap;
 
 #[derive(Clone, Default)]
@@ -266,11 +267,39 @@ impl RuleEngine {
     }
 
     fn search_books_xpath(&self, source: &BookSource, body: &str, base_url: &str, rule: &SearchRule) -> Vec<SearchBook> {
-        // For XPath, we need to get list of items and then extract fields
-        // This is a simplified implementation
-        // For now, return empty as full XPath element selection needs more work
-        // Fall back to HTML parsing
-        self.search_books_html(source, body, base_url, rule)
+        let package = match sxd_document::parser::parse(body) {
+            Ok(p) => p,
+            Err(_) => return vec![],
+        };
+        let document = package.as_document();
+        let list_rule = rule.book_list.as_deref().unwrap_or("");
+        let items = xpath_select_nodes(sxd_xpath::nodeset::Node::Root(document.root()), self.strip_mode_prefix(list_rule));
+        let mut out = Vec::with_capacity(items.len());
+
+        for item in items {
+            let name = eval_field_xpath(rule.name.as_deref().unwrap_or(""), item, base_url);
+            let author = eval_field_xpath(rule.author.as_deref().unwrap_or(""), item, base_url);
+            let book_url = eval_field_xpath(rule.book_url.as_deref().unwrap_or(""), item, base_url);
+            let cover_url = eval_field_xpath(rule.cover_url.as_deref().unwrap_or(""), item, base_url);
+            let intro = eval_field_xpath(rule.intro.as_deref().unwrap_or(""), item, base_url);
+            let kind = eval_field_xpath(rule.kind.as_deref().unwrap_or(""), item, base_url);
+            let last_chapter = eval_field_xpath(rule.last_chapter.as_deref().unwrap_or(""), item, base_url);
+            let update_time = eval_field_xpath(rule.update_time.as_deref().unwrap_or(""), item, base_url);
+            out.push(SearchBook {
+                name: name.unwrap_or_default(),
+                author: author.unwrap_or_default(),
+                book_url: resolve_url(base_url, &book_url.unwrap_or_default()),
+                origin: source.book_source_url.clone(),
+                cover_url: cover_url.map(|u| resolve_url(base_url, &u)),
+                intro,
+                kind,
+                last_chapter,
+                update_time,
+                book_source_urls: None,
+            });
+        }
+
+        out
     }
 
     fn search_books_json(&self, source: &BookSource, body: &str, base_url: &str, rule: &SearchRule) -> Vec<SearchBook> {
@@ -290,6 +319,8 @@ impl RuleEngine {
             let kind = eval_field_json(rule.kind.as_deref().unwrap_or(""), &item, base_url);
             let last_chapter = eval_field_json(rule.last_chapter.as_deref().unwrap_or(""), &item, base_url);
             let update_time = eval_field_json(rule.update_time.as_deref().unwrap_or(""), &item, base_url);
+            let book_url = book_url.map(|u| resolve_url(base_url, &u));
+            let cover_url = cover_url.map(|u| resolve_url(base_url, &u));
             out.push(SearchBook {
                 name: name.unwrap_or_default(),
                 author: author.unwrap_or_default(),
@@ -347,23 +378,55 @@ fn parse_book_info_html(source: &BookSource, body: &str, base_url: &str, rule: &
 }
 
 fn parse_book_info_xpath(source: &BookSource, body: &str, base_url: &str, rule: &BookInfoRule, book_url: &str, ctx: &mut HashMap<String, String>) -> Book {
-    // Simplified XPath implementation - fall back to HTML for now
-    parse_book_info_html(source, body, base_url, rule, book_url, ctx)
+    let package = match sxd_document::parser::parse(body) {
+        Ok(p) => p,
+        Err(_) => return parse_book_info_html(source, body, base_url, rule, book_url, ctx),
+    };
+    let document = package.as_document();
+    let scope = select_xpath_scope(sxd_xpath::nodeset::Node::Root(document.root()), rule.init.as_deref());
+
+    let name = eval_field_xpath_with_ctx(rule.name.as_deref().unwrap_or(""), scope, base_url, ctx).unwrap_or_default();
+    let author = eval_field_xpath_with_ctx(rule.author.as_deref().unwrap_or(""), scope, base_url, ctx).unwrap_or_default();
+    let intro = eval_field_xpath_with_ctx(rule.intro.as_deref().unwrap_or(""), scope, base_url, ctx);
+    let kind = eval_field_xpath_with_ctx(rule.kind.as_deref().unwrap_or(""), scope, base_url, ctx);
+    let last_chapter = eval_field_xpath_with_ctx(rule.last_chapter.as_deref().unwrap_or(""), scope, base_url, ctx);
+    let update_time = eval_field_xpath_with_ctx(rule.update_time.as_deref().unwrap_or(""), scope, base_url, ctx);
+    let cover_url = eval_field_xpath_with_ctx(rule.cover_url.as_deref().unwrap_or(""), scope, base_url, ctx).map(|u| resolve_url(base_url, &u));
+    let word_count = eval_field_xpath_with_ctx(rule.word_count.as_deref().unwrap_or(""), scope, base_url, ctx);
+    let toc_url = eval_field_xpath_with_ctx(rule.toc_url.as_deref().unwrap_or(""), scope, base_url, ctx).map(|u| resolve_url(base_url, &u));
+
+    Book {
+        name,
+        author,
+        book_url: book_url.to_string(),
+        origin: source.book_source_url.clone(),
+        origin_name: Some(source.book_source_name.clone()),
+        cover_url,
+        toc_url: toc_url.or_else(|| Some(book_url.to_string())),
+        intro,
+        latest_chapter_title: last_chapter,
+        word_count,
+        info_html: None,
+        toc_html: None,
+        kind,
+        update_time,
+        ..Default::default()
+    }
 }
 
 fn parse_book_info_json(source: &BookSource, v: &Value, base_url: &str, rule: &BookInfoRule, book_url: &str, ctx: &mut HashMap<String, String>) -> Book {
-    if let Some(init) = &rule.init {
-        let _ = eval_field_json_with_ctx(init, v, base_url, ctx);
-    }
-    let name = eval_field_json_with_ctx(rule.name.as_deref().unwrap_or(""), v, base_url, ctx).unwrap_or_default();
-    let author = eval_field_json_with_ctx(rule.author.as_deref().unwrap_or(""), v, base_url, ctx).unwrap_or_default();
-    let intro = eval_field_json_with_ctx(rule.intro.as_deref().unwrap_or(""), v, base_url, ctx);
-    let kind = eval_field_json_with_ctx(rule.kind.as_deref().unwrap_or(""), v, base_url, ctx);
-    let last_chapter = eval_field_json_with_ctx(rule.last_chapter.as_deref().unwrap_or(""), v, base_url, ctx);
-    let update_time = eval_field_json_with_ctx(rule.update_time.as_deref().unwrap_or(""), v, base_url, ctx);
-    let cover_url = eval_field_json_with_ctx(rule.cover_url.as_deref().unwrap_or(""), v, base_url, ctx);
-    let word_count = eval_field_json_with_ctx(rule.word_count.as_deref().unwrap_or(""), v, base_url, ctx);
-    let toc_url = eval_field_json_with_ctx(rule.toc_url.as_deref().unwrap_or(""), v, base_url, ctx);
+    let scope = select_json_scope(v, rule.init.as_deref(), base_url, ctx);
+    let name = eval_field_json_with_ctx(rule.name.as_deref().unwrap_or(""), &scope, base_url, ctx).unwrap_or_default();
+    let author = eval_field_json_with_ctx(rule.author.as_deref().unwrap_or(""), &scope, base_url, ctx).unwrap_or_default();
+    let intro = eval_field_json_with_ctx(rule.intro.as_deref().unwrap_or(""), &scope, base_url, ctx);
+    let kind = eval_field_json_with_ctx(rule.kind.as_deref().unwrap_or(""), &scope, base_url, ctx);
+    let last_chapter = eval_field_json_with_ctx(rule.last_chapter.as_deref().unwrap_or(""), &scope, base_url, ctx);
+    let update_time = eval_field_json_with_ctx(rule.update_time.as_deref().unwrap_or(""), &scope, base_url, ctx);
+    let cover_url = eval_field_json_with_ctx(rule.cover_url.as_deref().unwrap_or(""), &scope, base_url, ctx)
+        .map(|u| resolve_url(base_url, &u));
+    let word_count = eval_field_json_with_ctx(rule.word_count.as_deref().unwrap_or(""), &scope, base_url, ctx);
+    let toc_url = eval_field_json_with_ctx(rule.toc_url.as_deref().unwrap_or(""), &scope, base_url, ctx)
+        .map(|u| resolve_url(base_url, &u));
     Book {
         name,
         author,
@@ -448,8 +511,37 @@ fn parse_chapter_list_html(body: &str, base_url: &str, rule: &TocRule, ctx: &mut
 }
 
 fn parse_chapter_list_xpath(body: &str, base_url: &str, rule: &TocRule, ctx: &mut HashMap<String, String>) -> (Vec<BookChapter>, Vec<String>) {
-    // Fall back to HTML for now
-    parse_chapter_list_html(body, base_url, rule, ctx)
+    let package = match sxd_document::parser::parse(body) {
+        Ok(p) => p,
+        Err(_) => return parse_chapter_list_html(body, base_url, rule, ctx),
+    };
+    let document = package.as_document();
+    let scope = select_xpath_scope(sxd_xpath::nodeset::Node::Root(document.root()), rule.init.as_deref());
+    let list_rule = rule.chapter_list.as_deref().unwrap_or("");
+    let items = xpath_select_nodes(scope, list_rule);
+
+    let mut seen_urls = std::collections::HashSet::new();
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let title = eval_field_xpath_with_ctx(rule.chapter_name.as_deref().unwrap_or(""), item, base_url, ctx).unwrap_or_default();
+        let url = eval_field_xpath_with_ctx(rule.chapter_url.as_deref().unwrap_or(""), item, base_url, ctx).unwrap_or_default();
+        let url_abs = resolve_url(base_url, &url);
+        if seen_urls.contains(&url_abs) {
+            continue;
+        }
+        seen_urls.insert(url_abs.clone());
+        out.push(BookChapter { title, url: url_abs, index: out.len() as i32 });
+    }
+
+    let next_urls = rule.next_toc_url.as_deref()
+        .map(|xpath| xpath_eval_strings(scope, xpath))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|u| !u.is_empty())
+        .map(|u| resolve_url(base_url, &u))
+        .collect();
+
+    (out, next_urls)
 }
 
 fn parse_chapter_list_json(body: &str, base_url: &str, rule: &TocRule, ctx: &mut HashMap<String, String>) -> (Vec<BookChapter>, Vec<String>) {
@@ -457,30 +549,27 @@ fn parse_chapter_list_json(body: &str, base_url: &str, rule: &TocRule, ctx: &mut
         Ok(v) => v,
         Err(_) => return (vec![], vec![]),
     };
-
-    if let Some(init) = &rule.init {
-        let _ = eval_field_json_with_ctx(init, &v, base_url, ctx);
-    }
-
+    let scope = select_json_scope(&v, rule.init.as_deref(), base_url, ctx);
     let list_rule = rule.chapter_list.as_deref().unwrap_or("");
-    let items = jsonpath::jsonpath_query(&v, list_rule);
+    let items = jsonpath::jsonpath_query(&scope, list_rule);
 
     let mut seen_urls = std::collections::HashSet::new();
     let mut out = Vec::with_capacity(items.len());
     for item in items {
         let title = eval_field_json_with_ctx(rule.chapter_name.as_deref().unwrap_or(""), &item, base_url, ctx).unwrap_or_default();
         let url = eval_field_json_with_ctx(rule.chapter_url.as_deref().unwrap_or(""), &item, base_url, ctx).unwrap_or_default();
+        let url_abs = resolve_url(base_url, &url);
 
-        if seen_urls.contains(&url) {
+        if seen_urls.contains(&url_abs) {
             continue;
         }
-        seen_urls.insert(url.clone());
+        seen_urls.insert(url_abs.clone());
 
-        out.push(BookChapter { title, url, index: out.len() as i32 });
+        out.push(BookChapter { title, url: url_abs, index: out.len() as i32 });
     }
 
     let next_urls: Vec<String> = rule.next_toc_url.as_ref()
-        .map(|r| jsonpath::jsonpath_query(&v, r))
+        .map(|r| jsonpath::jsonpath_query(&scope, r))
         .unwrap_or_default()
         .into_iter()
         .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -489,6 +578,26 @@ fn parse_chapter_list_json(body: &str, base_url: &str, rule: &TocRule, ctx: &mut
         .collect();
 
     (out, next_urls)
+}
+
+fn select_json_scope(v: &Value, init_rule: Option<&str>, base_url: &str, ctx: &mut HashMap<String, String>) -> Value {
+    let Some(init_rule) = init_rule.map(str::trim).filter(|s| !s.is_empty()) else {
+        return v.clone();
+    };
+
+    if let Some(res) = try_put_get_json(init_rule, v, base_url, ctx) {
+        let _ = res;
+        return v.clone();
+    }
+
+    let interpolated = interpolate_json_templates(init_rule, v, base_url, ctx);
+    let (pure_rule, _) = split_legado_regex(&interpolated);
+    let (pure, _) = extract_js(&pure_rule);
+    if pure.is_empty() {
+        return v.clone();
+    }
+
+    jsonpath::jsonpath_query(v, pure).into_iter().next().unwrap_or_else(|| v.clone())
 }
 
 fn pick_json_field(v: &Value, rule: Option<&str>) -> Option<String> {
@@ -505,7 +614,8 @@ fn pick_json_field(v: &Value, rule: Option<&str>) -> Option<String> {
 }
 
 fn resolve_url(base: &str, url: &str) -> String {
-    let url = strip_url_config(url);
+    let base = normalize_source_url(base);
+    let url = normalize_source_url(strip_url_config(url));
 
     if url.is_empty() { return base.to_string(); }
     if url.starts_with("http://") || url.starts_with("https://") {
@@ -515,24 +625,54 @@ fn resolve_url(base: &str, url: &str) -> String {
         return format!("https:{}", url);
     }
 
-    let base_url = match url::Url::parse(base) {
+    let mut base_url = match url::Url::parse(&base) {
         Ok(u) => u,
         Err(_) => return url.to_string(),
     };
+    base_url.set_fragment(None);
 
     if url.starts_with('/') {
-        let mut out = base_url.clone();
-        out.set_path(url);
-        return out.to_string();
+        return format!("{}://{}{}", base_url.scheme(), base_url.host_str().unwrap_or(""), url);
     }
 
-    match base_url.join(url) {
+    match base_url.join(&url) {
         Ok(u) => u.to_string(),
         Err(_) => {
             let base = base.trim_end_matches('/');
             format!("{}/{}", base, url.trim_start_matches('/'))
         }
     }
+}
+
+fn interpolate_json_templates(rule: &str, v: &Value, base_url: &str, ctx: &HashMap<String, String>) -> String {
+    let re = regex::Regex::new(r"\{\{(.*?)\}\}").unwrap();
+    re.replace_all(rule, |caps: &regex::Captures| {
+        let expr = caps.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
+        if expr.is_empty() {
+            return String::new();
+        }
+
+        if let Some(key) = expr.strip_prefix("@get:{").and_then(|s| s.strip_suffix('}')) {
+            return ctx.get(key.trim()).cloned().unwrap_or_default();
+        }
+
+        if expr.starts_with('$') {
+            return pick_json_field(v, Some(expr)).unwrap_or_default();
+        }
+
+        if let Some(val) = ctx.get(expr) {
+            return val.clone();
+        }
+
+        if let Some(val) = pick_json_field(v, Some(expr)) {
+            return val;
+        }
+
+        match eval_js(expr, &serde_json::to_string(v).unwrap_or_default(), base_url) {
+            Ok(res) => res,
+            Err(_) => String::new(),
+        }
+    }).into_owned()
 }
 
 fn strip_url_config(url: &str) -> &str {
@@ -649,16 +789,92 @@ fn eval_field_json(rule: &str, v: &Value, base_url: &str) -> Option<String> {
     eval_field_json_with_ctx(rule, v, base_url, &mut HashMap::new())
 }
 
+fn eval_field_xpath(rule: &str, node: sxd_xpath::nodeset::Node<'_>, base_url: &str) -> Option<String> {
+    eval_field_xpath_with_ctx(rule, node, base_url, &mut HashMap::new())
+}
+
+fn eval_field_xpath_with_ctx(rule: &str, node: sxd_xpath::nodeset::Node<'_>, base_url: &str, ctx: &mut HashMap<String, String>) -> Option<String> {
+    if rule.trim().is_empty() {
+        return None;
+    }
+    if rule.starts_with("@put:") || rule.starts_with("@get:") {
+        return ctx.get(rule).cloned();
+    }
+
+    let (pure_rule, regex_part) = split_legado_regex(rule);
+    let (pure, js) = extract_js(&pure_rule);
+    let mut text = if pure.trim().is_empty() {
+        node.string_value()
+    } else {
+        xpath_eval_strings(node, pure).into_iter().next().unwrap_or_default()
+    };
+
+    if let Some(script) = js {
+        if let Ok(res) = eval_js(script, &text, base_url) {
+            text = res;
+        }
+    }
+    if let Some(reg) = regex_part {
+        text = apply_legado_regex(&text, reg);
+    }
+    if text.is_empty() { None } else { Some(text) }
+}
+
+fn select_xpath_scope<'a>(node: sxd_xpath::nodeset::Node<'a>, init_rule: Option<&str>) -> sxd_xpath::nodeset::Node<'a> {
+    let Some(init_rule) = init_rule.map(str::trim).filter(|s| !s.is_empty()) else {
+        return node;
+    };
+    xpath_select_nodes(node, init_rule).into_iter().next().unwrap_or(node)
+}
+
+fn xpath_select_nodes<'a>(node: sxd_xpath::nodeset::Node<'a>, xpath: &str) -> Vec<sxd_xpath::nodeset::Node<'a>> {
+    let xpath = xpath.trim();
+    if xpath.is_empty() {
+        return vec![];
+    }
+    let context = XPathContext::new();
+    match XPathFactory::new().build(xpath) {
+        Ok(Some(expr)) => match expr.evaluate(&context, node) {
+            Ok(XPathValue::Nodeset(ns)) => ns.document_order(),
+            _ => vec![],
+        },
+        _ => vec![],
+    }
+}
+
+fn xpath_eval_strings(node: sxd_xpath::nodeset::Node<'_>, xpath: &str) -> Vec<String> {
+    let xpath = xpath.trim();
+    if xpath.is_empty() {
+        return vec![];
+    }
+    let context = XPathContext::new();
+    match XPathFactory::new().build(xpath) {
+        Ok(Some(expr)) => match expr.evaluate(&context, node) {
+            Ok(XPathValue::Nodeset(ns)) => ns.document_order().into_iter().map(|n| n.string_value()).collect(),
+            Ok(XPathValue::String(s)) => vec![s],
+            Ok(XPathValue::Number(n)) => vec![n.to_string()],
+            Ok(XPathValue::Boolean(b)) => vec![b.to_string()],
+            Err(_) => vec![],
+        },
+        _ => vec![],
+    }
+}
+
 fn eval_field_json_with_ctx(rule: &str, v: &Value, base_url: &str, ctx: &mut HashMap<String, String>) -> Option<String> {
     if let Some(res) = try_put_get_json(rule, v, base_url, ctx) {
         return Some(res);
     }
 
-    let (pure_rule, regex_part) = split_legado_regex(rule);
+    let interpolated_rule = interpolate_json_templates(rule, v, base_url, ctx);
+    let (pure_rule, regex_part) = split_legado_regex(&interpolated_rule);
     let (pure, js) = extract_js(&pure_rule);
 
     let mut text = if pure.is_empty() {
         "".to_string()
+    } else if pure.contains("{{") && pure.contains("}}") {
+        pure.to_string()
+    } else if pure.contains('/') || pure.contains('?') || pure.contains('&') || pure.contains('=') || pure.contains(',') {
+        pure.to_string()
     } else {
         pick_json_field(v, Some(pure)).unwrap_or_default()
     };

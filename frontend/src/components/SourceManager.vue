@@ -123,6 +123,14 @@
               <div class="editor-head">
                 <h3>{{ editingSource ? '编辑书源' : '新增书源' }}</h3>
                 <div class="editor-actions">
+                  <button
+                    v-if="canLoginSource"
+                    class="mini-btn"
+                    :disabled="sourceLoginLoading"
+                    @click="handleSourceLogin"
+                  >
+                    {{ sourceLoginLoading ? '登录中...' : '书源登录' }}
+                  </button>
                   <button class="mini-btn" @click="formatEditor">格式化</button>
                   <button class="mini-btn primary" @click="saveEditor">保存</button>
                 </div>
@@ -137,6 +145,24 @@
         </div>
       </div>
     </Transition>
+    <Transition name="scale">
+      <div v-if="loginPreviewVisible" class="login-preview-container" @click.self="loginPreviewVisible = false">
+        <div class="login-preview-modal">
+          <div class="login-preview-header">
+            <div>
+              <h3>书源登录页</h3>
+              <p>{{ loginPreviewUrl }}</p>
+            </div>
+            <button class="icon-btn" @click="loginPreviewVisible = false" title="关闭">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6 6 18M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+          <iframe class="login-preview-frame" :src="loginPreviewFrameUrl"></iframe>
+        </div>
+      </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -145,6 +171,7 @@ import { ref, computed, watch } from 'vue'
 import {
   getBookSources,
   deleteBookSource,
+  loginBookSource,
   saveBookSource,
   saveBookSources,
   readRemoteSourceFile,
@@ -182,6 +209,10 @@ const subscriptions = ref<SourceSubscription[]>(loadSubscriptions())
 
 const editingSource = ref<BookSource | null>(null)
 const editorText = ref(JSON.stringify(createEmptySource(), null, 2))
+const sourceLoginLoading = ref(false)
+const loginPreviewVisible = ref(false)
+const loginPreviewUrl = ref('')
+const loginPreviewFrameUrl = ref('')
 
 const groupList = computed(() => {
   const groups = new Set<string>()
@@ -210,6 +241,15 @@ const filteredSources = computed(() => {
     list = list.filter((s) => s.bookSourceGroup?.includes(filterGroup.value))
   }
   return list
+})
+
+const canLoginSource = computed(() => {
+  try {
+    const parsed = JSON.parse(editorText.value) as BookSource
+    return Boolean(parsed.bookSourceUrl?.trim() && parsed.loginUrl?.trim())
+  } catch {
+    return false
+  }
 })
 
 function createEmptySource(): BookSource {
@@ -307,6 +347,54 @@ async function saveEditor() {
   } catch (e: unknown) {
     appStore.showToast((e as Error).message || '保存失败', 'error')
   }
+}
+
+async function handleSourceLogin() {
+  try {
+    const parsed = JSON.parse(editorText.value) as BookSource
+    if (!parsed.bookSourceUrl?.trim()) {
+      throw new Error('书源链接不能为空')
+    }
+    if (!parsed.loginUrl?.trim()) {
+      throw new Error('当前书源未配置 loginUrl')
+    }
+
+    sourceLoginLoading.value = true
+    if (!editingSource.value || editingSource.value.bookSourceUrl !== parsed.bookSourceUrl) {
+      await saveBookSource(parsed)
+      await loadSources()
+      const latest = sources.value.find((item) => item.bookSourceUrl === parsed.bookSourceUrl)
+      if (latest) {
+        editSource(latest)
+      }
+    }
+
+    const result = await loginBookSource(parsed.bookSourceUrl)
+    const check = typeof result.checkResult === 'string' && result.checkResult.trim()
+      ? `，校验结果：${result.checkResult}`
+      : ''
+    if (result.url?.trim()) {
+      loginPreviewUrl.value = result.url
+      loginPreviewFrameUrl.value = buildLoginProxyUrl(parsed.bookSourceUrl, result.url)
+      loginPreviewVisible.value = true
+    }
+    appStore.showToast(`书源登录请求已完成，状态 ${result.status}${check}`, 'success')
+  } catch (e: unknown) {
+    appStore.showToast((e as Error).message || '书源登录失败', 'error')
+  } finally {
+    sourceLoginLoading.value = false
+  }
+}
+
+function buildLoginProxyUrl(bookSourceUrl: string, targetUrl: string) {
+  const params = new URLSearchParams()
+  const accessToken = localStorage.getItem('accessToken')
+  if (accessToken) {
+    params.set('accessToken', accessToken)
+  }
+  params.set('bookSourceUrl', bookSourceUrl)
+  params.set('url', targetUrl)
+  return `/reader3/bookSourceProxy?${params.toString()}`
 }
 
 function triggerFileImport() {
@@ -448,6 +536,57 @@ watch(() => props.modelValue, (v) => {
     calc(var(--space-6) + var(--safe-area-right))
     calc(var(--space-6) + var(--safe-area-bottom))
     calc(var(--space-6) + var(--safe-area-left));
+}
+
+.login-preview-container {
+  position: fixed;
+  inset: 0;
+  z-index: calc(var(--z-modal) + 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.login-preview-modal {
+  width: min(980px, 100%);
+  height: min(86vh, 900px);
+  background: var(--color-bg-elevated);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-xl);
+}
+
+.login-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.login-preview-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.login-preview-header p {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  word-break: break-all;
+}
+
+.login-preview-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
 }
 
 .source-modal {
@@ -829,20 +968,29 @@ watch(() => props.modelValue, (v) => {
     width: 100%;
     max-height: calc(100dvh - 16px);
     border-radius: 24px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .content-grid {
     grid-template-columns: 1fr;
-    overflow: auto;
+    overflow: visible;
+    flex: none;
   }
 
   .source-list-wrapper {
     min-height: 38vh;
+    overflow: visible;
   }
 
   .editor-panel {
     min-height: 220px;
     max-height: 32vh;
+    overflow: hidden;
+  }
+
+  .source-list {
+    overflow: visible;
   }
 
   .remote-form,

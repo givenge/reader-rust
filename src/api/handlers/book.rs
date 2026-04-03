@@ -10,6 +10,7 @@ use crate::api::AppState;
 use crate::api::auth::AuthContext;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::{book::Book, book_source::BookSource};
+use crate::util::text::{normalize_source_url, repair_encoded_url};
 use std::convert::Infallible;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
@@ -65,6 +66,7 @@ pub struct ChapterListRequest {
     pub book_source_url: Option<String>,
     #[serde(rename = "bookSource")]
     pub book_source: Option<BookSource>,
+    pub refresh: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -202,7 +204,7 @@ pub async fn search_book(State(state): State<AppState>, auth: AuthContext, Query
     let key = req.key.ok_or_else(|| AppError::BadRequest("key required".to_string()))?;
     let page = req.page.unwrap_or(1);
     let source = resolve_book_source(&state, &user_ns, req.book_source_url, req.book_source, None).await?;
-    let books = state.book_service.search_book(&source, &key, page).await.map_err(|e| {
+    let books = state.book_service.search_book(&user_ns, &source, &key, page).await.map_err(|e| {
         tracing::error!("search_book failed: {:?}", e);
         e
     })?;
@@ -235,7 +237,8 @@ pub async fn search_book_multi(State(state): State<AppState>, auth: AuthContext,
     for source in sources {
         let svc = state.book_service.clone();
         let k = key.clone();
-        tasks.push(tokio::spawn(async move { svc.search_book(&source, &k, page).await }));
+        let user_ns = user_ns.clone();
+        tasks.push(tokio::spawn(async move { svc.search_book(&user_ns, &source, &k, page).await }));
     }
     let mut results: Vec<crate::model::search::SearchBook> = Vec::new();
     for t in tasks {
@@ -325,7 +328,7 @@ pub async fn explore_book(State(state): State<AppState>, auth: AuthContext, Quer
     let rule_find_url = req.rule_find_url.ok_or_else(|| AppError::BadRequest("ruleFindUrl required".to_string()))?;
     let page = req.page.unwrap_or(1);
     let source = resolve_book_source(&state, &user_ns, req.book_source_url, req.book_source, Some(&rule_find_url)).await?;
-    let list = state.book_service.explore_book(&source, &rule_find_url, page).await?;
+    let list = state.book_service.explore_book(&user_ns, &source, &rule_find_url, page).await?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(list).unwrap_or_default())))
 }
 
@@ -348,8 +351,9 @@ pub async fn get_book_info(State(state): State<AppState>, auth: AuthContext, Que
     }
     
     let url = req.url.ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
+    let url = repair_encoded_url(&url);
     let source = resolve_book_source(&state, &user_ns, req.book_source_url, req.book_source, Some(&url)).await?;
-    let book = state.book_service.get_book_info(&source, &url).await?;
+    let book = state.book_service.get_book_info(&user_ns, &source, &url).await?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(book).unwrap_or_default())))
 }
 
@@ -366,31 +370,41 @@ pub async fn get_chapter_list(State(state): State<AppState>, auth: AuthContext, 
                     "tocUrl" => req.toc_url = Some(v.into_owned()),
                     "bookUrl" | "url" => req.book_url = Some(v.into_owned()),
                     "bookSourceUrl" | "origin" => req.book_source_url = Some(v.into_owned()),
+                    "refresh" => req.refresh = v.parse::<i32>().ok(),
                     _ => {}
                 }
             }
         }
     }
 
+    let do_refresh = req.refresh.unwrap_or(0) > 0;
+
     let source = resolve_book_source(&state, &user_ns, req.book_source_url.clone(), req.book_source.clone(), req.book_url.as_deref().or(req.toc_url.as_deref())).await?;
     let toc_url = if let Some(u) = req.toc_url {
-        u
+        repair_encoded_url(&u)
     } else if let Some(book_url) = req.book_url {
-        let book = state.book_service.get_book_info(&source, &book_url).await?;
-        book.toc_url.clone().unwrap_or(book_url)
+        let book_url = repair_encoded_url(&book_url);
+        let book = state.book_service.get_book_info(&user_ns, &source, &book_url).await?;
+        repair_encoded_url(book.toc_url.as_deref().unwrap_or(&book_url))
     } else {
         return Err(AppError::BadRequest("tocUrl or bookUrl required".to_string()));
     };
 
     // Check if we have cached chapters
-    if let Ok(Some(cached)) = state.book_service.load_chapter_list_cache(&user_ns, &toc_url).await {
-        if !cached.is_empty() {
-            return Ok(Json(ApiResponse::ok(serde_json::to_value(cached).unwrap_or_default())));
+    if do_refresh {
+        let _ = state.book_service.delete_chapter_list_cache(&user_ns, &toc_url).await;
+    }
+
+    if !do_refresh {
+        if let Ok(Some(cached)) = state.book_service.load_chapter_list_cache(&user_ns, &toc_url).await {
+            if !cached.is_empty() {
+                return Ok(Json(ApiResponse::ok(serde_json::to_value(cached).unwrap_or_default())));
+            }
         }
     }
 
     // Get first page of chapters
-    let (chapters, pagination) = state.book_service.get_chapter_list_first_page(&source, &toc_url).await?;
+    let (chapters, pagination) = state.book_service.get_chapter_list_first_page(&user_ns, &source, &toc_url).await?;
 
     // Save first page to cache immediately
     let _ = state.book_service.save_chapter_list_cache(&user_ns, &toc_url, &chapters).await;
@@ -460,7 +474,7 @@ pub async fn get_book_content(State(state): State<AppState>, auth: AuthContext, 
         if req.index.is_some() && !url.contains("/read/") && !url.contains("/chapter/") {
             // url is bookUrl, need to get chapter from index
             let source = resolve_book_source(&state, &user_ns, req.book_source_url.clone(), req.book_source.clone(), Some(url)).await?;
-            let book_info = state.book_service.get_book_info(&source, url).await?;
+            let book_info = state.book_service.get_book_info(&user_ns, &source, url).await?;
             let toc_url = book_info.toc_url.as_deref().unwrap_or(url);
 
             // If refresh is requested, delete chapter list cache first
@@ -578,9 +592,15 @@ pub async fn save_book(State(state): State<AppState>, auth: AuthContext, Json(mu
         return Err(AppError::BadRequest("origin required".to_string()));
     }
 
+    book.book_url = repair_encoded_url(&book.book_url);
+    book.origin = normalize_source_url(&book.origin);
+    if let Some(toc_url) = &book.toc_url {
+        book.toc_url = Some(repair_encoded_url(toc_url));
+    }
+
     if book.toc_url.is_none() || book.name.trim().is_empty() {
         if let Some(source) = state.book_source_service.get(&user_ns, &book.origin).await? {
-            if let Ok(info) = state.book_service.get_book_info(&source, &book.book_url).await {
+            if let Ok(info) = state.book_service.get_book_info(&user_ns, &source, &book.book_url).await {
                 merge_book(&mut book, info);
             }
         }
@@ -667,7 +687,7 @@ pub async fn set_book_source(
         }
     }
 
-    match state.book_service.get_book_info(&new_source, &new_book_url).await {
+    match state.book_service.get_book_info(&user_ns, &new_source, &new_book_url).await {
         Ok(info) => merge_book(&mut updated, info),
         Err(err) => {
             tracing::warn!(
@@ -715,6 +735,7 @@ pub async fn save_book_progress(State(state): State<AppState>, auth: AuthContext
         .or(req.book_url)
         .or(req.search_book.and_then(|s| s.book_url))
         .ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
+    let book_url = repair_encoded_url(&book_url);
     let index = req.index.ok_or_else(|| AppError::BadRequest("index required".to_string()))?;
 
     let shelf_book = state.book_service.get_shelf_book(&user_ns, &book_url).await?
@@ -750,7 +771,7 @@ pub async fn get_shelf_book(State(state): State<AppState>, auth: AuthContext, Qu
     let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let url = req.url.ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
-    let book = state.book_service.get_shelf_book(&user_ns, &url).await?
+    let book = state.book_service.get_shelf_book(&user_ns, &repair_encoded_url(&url)).await?
         .ok_or_else(|| AppError::BadRequest("书籍不存在".to_string()))?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(book).unwrap_or_default())))
 }
@@ -764,7 +785,7 @@ pub async fn get_shelf_book_with_cache_info(State(state): State<AppState>, auth:
         if let Ok(Some(source)) = state.book_source_service.get(&user_ns, &book.origin).await {
             let mut toc_url = book.toc_url.clone();
             if toc_url.is_none() {
-                if let Ok(info) = state.book_service.get_book_info(&source, &book.book_url).await {
+                if let Ok(info) = state.book_service.get_book_info(&user_ns, &source, &book.book_url).await {
                     toc_url = info.toc_url.or(Some(book.book_url.clone()));
                 }
             }
@@ -1017,8 +1038,9 @@ pub async fn search_book_multi_sse(State(state): State<AppState>, auth: AuthCont
                 let svc = state_clone.book_service.clone();
                 let k = key.clone();
                 let cur_idx = idx;
+                let user_ns_value = user_ns.clone();
                 tasks.push(tokio::spawn(async move {
-                    let res = svc.search_book(&source, &k, 1).await;
+                    let res = svc.search_book(&user_ns_value, &source, &k, 1).await;
                     (cur_idx, source.book_source_name, res)
                 }));
                 idx += 1;
@@ -1126,8 +1148,9 @@ pub async fn search_book_source_sse(State(state): State<AppState>, auth: AuthCon
                 let target_name = book.name.clone();
                 let target_author = book.author.clone();
                 let cur_idx = idx;
+                let user_ns_value = user_ns.clone();
                 tasks.push(tokio::spawn(async move {
-                    let res = svc.search_book(&source, &target_name, 1).await;
+                    let res = svc.search_book(&user_ns_value, &source, &target_name, 1).await;
                     (cur_idx, res, target_name, target_author)
                 }));
                 last_idx = idx;
@@ -1212,8 +1235,9 @@ pub async fn get_available_book_source(State(state): State<AppState>, auth: Auth
         let svc = state.book_service.clone();
         let name = book.name.clone();
         let author = book.author.clone();
+        let user_ns_value = user_ns.clone();
         tasks.push(tokio::spawn(async move {
-            let res = svc.search_book(&source, &name, 1).await;
+            let res = svc.search_book(&user_ns_value, &source, &name, 1).await;
             (res, name, author)
         }));
     }
@@ -1259,7 +1283,7 @@ pub async fn book_source_debug_sse(State(state): State<AppState>, auth: AuthCont
             }
         };
         let _ = tx.send(Event::default().data(json_msg("start search"))).await;
-        match state_clone.book_service.search_book(&source, &keyword, 1).await {
+        match state_clone.book_service.search_book(&user_ns, &source, &keyword, 1).await {
             Ok(list) => {
                 let msg = format!("found {} items", list.len());
                 let _ = tx.send(Event::default().data(json_msg(&msg))).await;
@@ -1294,17 +1318,29 @@ async fn resolve_book_source(state: &AppState, user_ns: &str, book_source_url: O
         return Ok(src);
     }
     if let Some(url) = &book_source_url {
-        if !url.trim().is_empty() {
-            return state.book_source_service.get(&user_ns, url).await?
-                .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()));
+        let normalized = normalize_source_url(url);
+        if !normalized.is_empty() {
+            if let Some(src) = state.book_source_service.get(&user_ns, &normalized).await? {
+                return Ok(src);
+            }
+            let sources = state.book_source_service.list(&user_ns).await?;
+            if let Some(src) = sources.into_iter().find(|s| normalize_source_url(&s.book_source_url) == normalized) {
+                return Ok(src);
+            }
+            return Err(AppError::NotFound("bookSource not found".to_string()));
         }
     }
 
     // Try to find book_source_url from shelf book
     if let Some(b_url) = book_url {
         if let Ok(Some(shelf_book)) = state.book_service.get_shelf_book(&user_ns, b_url).await {
-            if !shelf_book.origin.trim().is_empty() {
-                if let Some(src) = state.book_source_service.get(&user_ns, &shelf_book.origin).await? {
+            let shelf_origin = normalize_source_url(&shelf_book.origin);
+            if !shelf_origin.is_empty() {
+                if let Some(src) = state.book_source_service.get(&user_ns, &shelf_origin).await? {
+                    return Ok(src);
+                }
+                let sources = state.book_source_service.list(&user_ns).await?;
+                if let Some(src) = sources.into_iter().find(|s| normalize_source_url(&s.book_source_url) == shelf_origin) {
                     return Ok(src);
                 }
             }
@@ -1322,7 +1358,8 @@ async fn resolve_book_source(state: &AppState, user_ns: &str, book_source_url: O
             let b_root = extract_root_domain(&b_host);
             let sources = state.book_source_service.list(&user_ns).await?;
             for s in sources {
-                if let Ok(s_url) = url::Url::parse(&s.book_source_url) {
+                let normalized_source_url = normalize_source_url(&s.book_source_url);
+                if let Ok(s_url) = url::Url::parse(&normalized_source_url) {
                     if let Some(s_host) = s_url.host_str() {
                         // Match by exact host or by root domain
                         let s_root = extract_root_domain(s_host);
