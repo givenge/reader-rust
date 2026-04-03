@@ -5,7 +5,7 @@
     @click="handleCardClick"
   >
     <!-- Cover -->
-    <div class="card-cover" @click.stop="$emit('info', book)">
+    <div class="card-cover" @click.stop="handleCoverClick">
       <img
         v-if="coverSrc"
         :src="coverSrc"
@@ -48,6 +48,10 @@
       <p v-if="asBook.latestChapterTitle" class="book-latest">
         最新：{{ asBook.latestChapterTitle }}
       </p>
+      <div v-if="!isSearch && (browserCachedCount > 0 || serverCachedCount > 0)" class="book-cache-row">
+        <span v-if="browserCachedCount > 0" class="cache-chip primary">离线 {{ browserCachedCount }} 章</span>
+        <span v-if="serverCachedCount > 0" class="cache-chip">服务端 {{ serverCachedCount }} 章</span>
+      </div>
       <!-- Search mode: add to shelf -->
       <button
         v-if="isSearch"
@@ -91,6 +95,14 @@ function handleCardClick() {
   }
 }
 
+function handleCoverClick() {
+  if (props.editMode) {
+    emit('select', props.book)
+  } else {
+    emit('info', props.book)
+  }
+}
+
 const coverFailed = ref(false)
 
 const asBook = computed(() => props.book as Book)
@@ -107,6 +119,9 @@ const unreadCount = computed(() => {
   if (!b.totalChapterNum || b.durChapterIndex === undefined) return 0
   return Math.max(0, b.totalChapterNum - 1 - b.durChapterIndex)
 })
+
+const browserCachedCount = computed(() => Math.max(0, asBook.value.browserCachedChapterCount || 0))
+const serverCachedCount = computed(() => Math.max(0, asBook.value.cachedChapterCount || 0))
 </script>
 
 <style scoped>
@@ -307,6 +322,29 @@ const unreadCount = computed(() => {
 
 .book-latest {
   color: var(--color-text-tertiary);
+}
+
+.book-cache-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.cache-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.cache-chip.primary {
+  background: rgba(201, 127, 58, 0.12);
+  color: var(--color-primary);
 }
 
 .add-shelf-btn {

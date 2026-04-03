@@ -3,7 +3,7 @@
     <div class="source-header">
       <div class="header-left">
         <h3>切换书源</h3>
-        <span class="source-count" v-if="results.length">{{ results.length }} 个结果</span>
+        <span class="source-count" v-if="preparedResults.length">{{ preparedResults.length }} 个结果</span>
       </div>
       <button class="close-btn" @click="store.closePanel()">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -18,6 +18,20 @@
         <div class="source-url">{{ currentSource.origin }}</div>
       </div>
 
+      <div v-if="store.book" class="book-brief">
+        <div class="book-brief-cover">
+          <img v-if="store.book.coverUrl" :src="store.book.coverUrl" :alt="store.book.name">
+          <div v-else class="book-brief-placeholder">{{ store.book.name.slice(0, 1) }}</div>
+        </div>
+        <div class="book-brief-main">
+          <div class="book-brief-title">{{ store.book.name }}</div>
+          <div class="book-brief-meta">{{ store.book.author || '未知作者' }}</div>
+          <div class="book-brief-meta" v-if="store.currentChapter?.title">当前章节：{{ store.currentChapter.title }}</div>
+          <div class="book-brief-meta" v-if="store.book.latestChapterTitle">最新章节：{{ store.book.latestChapterTitle }}</div>
+          <div class="book-brief-intro" v-if="store.book.intro">{{ store.book.intro }}</div>
+        </div>
+      </div>
+
       <div class="section-label">其他可用源</div>
       
       <div v-if="searching" class="loading">
@@ -25,29 +39,65 @@
         正在全网搜索同名书籍...
       </div>
       
-      <div v-else-if="!results.length" class="empty">未找到其他书源</div>
+      <div v-else-if="!preparedResults.length" class="empty">未找到其他书源</div>
       
       <div
         v-else
-        v-for="res in results"
-        :key="res.bookUrl + res.origin"
+        v-for="item in preparedResults"
+        :key="item.book.bookUrl + item.book.origin"
         class="source-item"
-        @click="handleSwitch(res)"
+        :class="{ selected: selectedCandidate?.book.bookUrl === item.book.bookUrl && selectedCandidate?.book.origin === item.book.origin }"
+        @click="selectCandidate(item)"
       >
         <div class="source-main">
           <div class="source-name-row">
-            <span class="source-name">{{ res.origin }}</span>
-            <span class="source-tag" v-if="res.kind">{{ res.kind }}</span>
+            <span class="source-name">{{ item.book.origin }}</span>
+            <span class="source-tag" v-if="item.book.kind">{{ item.book.kind }}</span>
+            <span v-if="item.sameLatest" class="compare-badge good">最新章节一致</span>
+            <span v-else-if="item.book.lastChapter" class="compare-badge">章节不同</span>
           </div>
-          <div class="source-author">{{ res.author }}</div>
-          <div class="source-chapter" v-if="res.lastChapter">最新: {{ res.lastChapter }}</div>
+          <div class="source-book-name" v-if="item.book.name">{{ item.book.name }}</div>
+          <div class="source-author">{{ item.book.author }}</div>
+          <div class="source-intro" v-if="item.book.intro">{{ item.book.intro }}</div>
+          <div class="source-chapter" v-if="item.book.lastChapter">最新: {{ item.book.lastChapter }}</div>
+          <div class="source-update" v-if="item.book.updateTime">更新时间: {{ item.book.updateTime }}</div>
+          <div class="source-compare-line">
+            <span v-if="item.sameName" class="compare-text">书名匹配</span>
+            <span v-if="item.sameAuthor" class="compare-text">作者匹配</span>
+            <span v-if="item.chapterHint" class="compare-text strong">{{ item.chapterHint }}</span>
+          </div>
         </div>
         <div class="source-action">
-          <button class="switch-btn">切换</button>
+          <button class="switch-btn" @click.stop="handleSwitch(item.book)">切换</button>
         </div>
       </div>
 
-      <div v-if="results.length" class="load-more-wrap">
+      <div v-if="selectedCandidate" class="compare-panel">
+        <div class="compare-header">
+          <h4>书源对照</h4>
+          <button class="switch-btn primary" :disabled="store.loading" @click="handleSwitch(selectedCandidate.book)">切换到此书源</button>
+        </div>
+        <div class="compare-grid">
+          <div class="compare-card">
+            <div class="compare-title">当前</div>
+            <div class="compare-name">{{ store.book?.name }}</div>
+            <div class="compare-meta">{{ store.book?.author || '未知作者' }}</div>
+            <div class="compare-line">书源：{{ store.book?.originName || store.book?.origin }}</div>
+            <div class="compare-line">当前章节：{{ store.currentChapter?.title || '未知' }}</div>
+            <div class="compare-line">最新章节：{{ store.book?.latestChapterTitle || '未知' }}</div>
+          </div>
+          <div class="compare-card highlight">
+            <div class="compare-title">目标</div>
+            <div class="compare-name">{{ candidatePreview?.name || selectedCandidate.book.name }}</div>
+            <div class="compare-meta">{{ candidatePreview?.author || selectedCandidate.book.author || '未知作者' }}</div>
+            <div class="compare-line">书源：{{ candidatePreview?.originName || selectedCandidate.book.origin }}</div>
+            <div class="compare-line">最新章节：{{ candidatePreview?.latestChapterTitle || selectedCandidate.book.lastChapter || '未知' }}</div>
+            <div class="compare-line compare-intro" v-if="candidatePreview?.intro || selectedCandidate.book.intro">{{ candidatePreview?.intro || selectedCandidate.book.intro }}</div>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="preparedResults.length" class="load-more-wrap">
         <button class="load-more-btn" :disabled="loadingMore" @click="loadMoreSources">
           {{ loadingMore ? '加载中...' : '加载更多' }}
         </button>
@@ -69,7 +119,17 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
 import { getAvailableBookSource, searchBookSourceSSE } from '../../api/search'
-import type { SearchBook } from '../../types'
+import { getBookInfo } from '../../api/bookshelf'
+import type { Book, SearchBook } from '../../types'
+
+type CandidateItem = {
+  book: SearchBook
+  sameName: boolean
+  sameAuthor: boolean
+  sameLatest: boolean
+  chapterHint: string
+  score: number
+}
 
 const store = useReaderStore()
 const appStore = useAppStore()
@@ -78,6 +138,8 @@ const searching = ref(false)
 const loadingMore = ref(false)
 const results = ref<SearchBook[]>([])
 const lastIndex = ref(-1)
+const selectedCandidate = ref<CandidateItem | null>(null)
+const candidatePreview = ref<Book | null>(null)
 let sourceSSE: EventSource | null = null
 
 const currentSource = computed(() => {
@@ -86,6 +148,33 @@ const currentSource = computed(() => {
     origin: store.book.origin,
     originName: store.book.originName
   }
+})
+
+function normalizeText(value?: string) {
+  return (value || '')
+    .replace(/\s+/g, '')
+    .replace(/[：:,.，。！？!?\-—_()（）【】\[\]<>《》'"“”‘’]/g, '')
+    .toLowerCase()
+}
+
+const preparedResults = computed<CandidateItem[]>(() => {
+  if (!store.book) return []
+  const currentName = normalizeText(store.book.name)
+  const currentAuthor = normalizeText(store.book.author)
+  const currentLatest = normalizeText(store.book.latestChapterTitle || store.currentChapter?.title)
+
+  return results.value
+    .map((book) => {
+      const sameName = normalizeText(book.name) === currentName
+      const sameAuthor = normalizeText(book.author) === currentAuthor
+      const sameLatest = !!currentLatest && normalizeText(book.lastChapter) === currentLatest
+      const chapterHint = sameLatest
+        ? '可无缝续读'
+        : (book.lastChapter ? `目标源最新：${book.lastChapter}` : '')
+      const score = (sameName ? 3 : 0) + (sameAuthor ? 3 : 0) + (sameLatest ? 4 : 0)
+      return { book, sameName, sameAuthor, sameLatest, chapterHint, score }
+    })
+    .sort((a, b) => b.score - a.score)
 })
 
 onMounted(() => {
@@ -114,6 +203,9 @@ async function startSearch() {
     console.error('getAvailableBookSource failed', e)
   } finally {
     searching.value = false
+    if (preparedResults.value.length) {
+      void selectCandidate(preparedResults.value[0])
+    }
   }
 }
 
@@ -137,6 +229,16 @@ function mergeCandidates(candidates: SearchBook[]) {
       results.value.push(item)
     }
   })
+}
+
+async function selectCandidate(item: CandidateItem) {
+  selectedCandidate.value = item
+  candidatePreview.value = null
+  try {
+    candidatePreview.value = await getBookInfo(item.book.bookUrl, item.book.origin)
+  } catch {
+    candidatePreview.value = null
+  }
 }
 
 function loadMoreSources() {
@@ -197,10 +299,11 @@ function loadMoreSources() {
 async function handleSwitch(res: SearchBook) {
   if (store.loading) return
   try {
-    await store.switchSource(res.bookUrl, res.origin)
+    const nextBook = await store.switchSource(res.bookUrl, res.origin)
     store.closePanel()
+    appStore.showToast(`已切换到 ${nextBook?.originName || nextBook?.origin || res.origin}`, 'success')
   } catch (e: any) {
-    alert('切换失败: ' + e.message)
+    appStore.showToast(`切换失败: ${e?.message || '未知错误'}`, 'error')
   }
 }
 </script>
@@ -239,6 +342,71 @@ async function handleSwitch(res: SearchBook) {
   padding: 8px 0;
 }
 
+.book-brief {
+  display: flex;
+  gap: 12px;
+  margin: 8px 16px 14px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(201, 127, 58, 0.08);
+  border: 1px solid rgba(201, 127, 58, 0.14);
+}
+
+.book-brief-cover {
+  width: 56px;
+  height: 76px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.book-brief-cover img,
+.book-brief-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.book-brief-cover img {
+  object-fit: cover;
+}
+
+.book-brief-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.book-brief-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.book-brief-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.book-brief-meta {
+  font-size: 12px;
+  opacity: 0.68;
+  line-height: 1.4;
+}
+
+.book-brief-intro {
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.76;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .section-label {
   padding: 12px 20px 4px;
   font-size: 11px;
@@ -260,14 +428,65 @@ async function handleSwitch(res: SearchBook) {
 
 .source-item:hover { background: rgba(0,0,0,0.03); }
 .source-item.current { background: rgba(201, 127, 58, 0.04); cursor: default; }
+.source-item.selected {
+  background: rgba(201, 127, 58, 0.08);
+  box-shadow: inset 3px 0 0 var(--color-primary, #c97f3a);
+}
 
 .source-main { flex: 1; min-width: 0; }
 .source-name-row { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
 .source-name { font-weight: 600; font-size: 14px; }
 .source-tag { font-size: 10px; opacity: 0.5; border: 1px solid currentColor; padding: 0 3px; border-radius: 3px; }
+.compare-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  opacity: 0.72;
+}
+
+.compare-badge.good {
+  background: rgba(82, 196, 26, 0.14);
+  color: #3f8f16;
+  opacity: 1;
+}
+
+.source-book-name {
+  font-size: 13px;
+  margin-bottom: 2px;
+  opacity: 0.86;
+}
 
 .source-author { font-size: 11px; opacity: 0.5; margin-bottom: 4px; }
 .source-chapter { font-size: 11px; opacity: 0.7; color: var(--color-primary, #c97f3a); }
+.source-update { font-size: 11px; opacity: 0.48; margin-top: 2px; }
+.source-compare-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.compare-text {
+  font-size: 11px;
+  opacity: 0.62;
+}
+
+.compare-text.strong {
+  color: var(--color-primary, #c97f3a);
+  opacity: 0.92;
+}
+
+.source-intro {
+  font-size: 12px;
+  opacity: 0.68;
+  line-height: 1.45;
+  margin-bottom: 4px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 .source-url { font-size: 11px; opacity: 0.3; }
 
@@ -287,6 +506,94 @@ async function handleSwitch(res: SearchBook) {
   color: white;
   border-color: var(--color-primary, #c97f3a);
   opacity: 1;
+}
+
+.compare-panel {
+  margin: 8px 16px 18px;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(201, 127, 58, 0.08);
+  border: 1px solid rgba(201, 127, 58, 0.14);
+}
+
+.compare-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.compare-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.switch-btn.primary {
+  background: var(--color-primary, #c97f3a);
+  border-color: var(--color-primary, #c97f3a);
+  color: #fff;
+  opacity: 1;
+}
+
+.switch-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.compare-card {
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.compare-card.highlight {
+  border-color: rgba(201, 127, 58, 0.28);
+  background: rgba(201, 127, 58, 0.12);
+}
+
+.compare-title {
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  opacity: 0.58;
+}
+
+.compare-name {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.compare-meta {
+  font-size: 12px;
+  opacity: 0.68;
+  margin-bottom: 10px;
+}
+
+.compare-line {
+  font-size: 12px;
+  line-height: 1.5;
+  opacity: 0.78;
+  margin-top: 4px;
+}
+
+.compare-intro {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .loading, .empty {
@@ -344,4 +651,29 @@ async function handleSwitch(res: SearchBook) {
 }
 
 .switch-overlay p { margin-top: 16px; font-size: 14px; opacity: 0.8; }
+
+@media (max-width: 640px) {
+  .source-item {
+    padding: 12px 16px;
+    align-items: flex-start;
+  }
+
+  .source-action {
+    padding-top: 2px;
+  }
+
+  .compare-panel {
+    margin: 8px 12px 16px;
+    padding: 12px;
+  }
+
+  .compare-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .compare-grid {
+    grid-template-columns: 1fr;
+  }
+}
 </style>

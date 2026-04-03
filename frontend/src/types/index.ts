@@ -33,6 +33,7 @@ export interface Book {
   kind?: string
   updateTime?: string
   cachedChapterCount?: number
+  browserCachedChapterCount?: number
 }
 
 // ─── 搜索结果 ───

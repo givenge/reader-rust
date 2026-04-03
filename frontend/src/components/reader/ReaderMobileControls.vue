@@ -144,23 +144,35 @@ defineEmits<{
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: calc(8px + var(--safe-area-top)) calc(16px + var(--safe-area-right)) 8px calc(16px + var(--safe-area-left));
   z-index: 20;
   box-shadow: 0 2px 10px rgba(0,0,0,0.05);
   color: var(--font-color);
   box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
 }
 
 .m-top-item {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 14px;
+  font-size: 13px;
   opacity: 0.7;
   cursor: pointer;
+  min-width: 0;
+  flex: 1 1 0;
+  justify-content: center;
+  padding: 0 2px;
 }
 
 .m-top-item svg { width: 18px; height: 18px; }
+.m-top-item span {
+  white-space: nowrap;
+}
 .m-top-item.active { opacity: 1; color: var(--color-primary, #c97f3a); }
 
 .m-bottom-bar {
@@ -223,6 +235,7 @@ defineEmits<{
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
 }
 
 .nav-btn {
@@ -238,6 +251,8 @@ defineEmits<{
 .progress-percent {
   font-size: 12px;
   opacity: 0.6;
+  white-space: nowrap;
+  text-align: center;
 }
 
 .m-float {
@@ -286,5 +301,56 @@ defineEmits<{
 
 .m-float::-webkit-scrollbar {
   display: none;
+}
+
+.m-top-bar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 420px) {
+  .m-top-bar {
+    justify-content: space-between;
+    gap: 14px;
+  }
+
+  .m-top-item {
+    font-size: 12px;
+    flex: 0 0 auto;
+  }
+
+  .m-bottom-bar {
+    gap: 12px;
+  }
+
+  .progress-row {
+    gap: 10px;
+  }
+
+  .page-text {
+    font-size: 11px;
+  }
+
+  .nav-row {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .nav-btn {
+    font-size: 13px;
+  }
+
+  .progress-percent {
+    order: 3;
+    width: 100%;
+  }
+
+  .m-float {
+    gap: 12px;
+  }
+
+  .m-btn {
+    width: 38px;
+    height: 38px;
+  }
 }
 </style>

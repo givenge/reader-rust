@@ -1,10 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed, reactive } from 'vue'
 import { useAppStore } from './app'
+import { useBookshelfStore } from './bookshelf'
 import {
   getChapterList,
   getBookContent,
-  getShelfBook,
   saveBookProgress,
   setBookSource as apiSetBookSource,
 } from '../api/bookshelf'
@@ -12,6 +12,7 @@ import {
   getBookmarks,
   saveBookmark,
   deleteBookmark as apiDeleteBookmark,
+  deleteBookmarks as apiDeleteBookmarks,
 } from '../api/bookmark'
 import { getReplaceRules } from '../api/replaceRule'
 import * as OpenCC from 'opencc-js'
@@ -107,12 +108,14 @@ interface SpeechConfig {
   voiceName: string
   speechRate: number
   speechPitch: number
+  stopAfterMinutes: number
 }
 
 const defaultSpeechConfig: SpeechConfig = {
   voiceName: '',
   speechRate: 1,
   speechPitch: 1,
+  stopAfterMinutes: 0,
 }
 
 function loadSpeechConfig(): SpeechConfig {
@@ -125,6 +128,7 @@ function loadSpeechConfig(): SpeechConfig {
 
 export const useReaderStore = defineStore('reader', () => {
   const appStore = useAppStore()
+  const shelfStore = useBookshelfStore()
   const book = ref<Book | null>(null)
   const chapters = ref<BookChapter[]>([])
   const currentIndex = ref(0)
@@ -277,6 +281,8 @@ export const useReaderStore = defineStore('reader', () => {
   const isPaused = ref(false)
   const voiceList = ref<SpeechSynthesisVoice[]>([])
   const speechConfig = reactive<SpeechConfig>(loadSpeechConfig())
+  const speechStopAt = ref(0)
+  let speechStopTimer: number | null = null
   let synth: SpeechSynthesis | null = typeof window !== 'undefined' ? window.speechSynthesis : null
   let currentUtterance: SpeechSynthesisUtterance | null = null
   let currentTTSOptions: TTSOptions | null = null
@@ -315,6 +321,37 @@ export const useReaderStore = defineStore('reader', () => {
   function setSpeechPitch(pitch: number) {
     speechConfig.speechPitch = pitch
     saveSpeechConfig()
+  }
+
+  function clearSpeechStopTimer(resetConfig = true) {
+    if (speechStopTimer) {
+      clearTimeout(speechStopTimer)
+      speechStopTimer = null
+    }
+    speechStopAt.value = 0
+    if (resetConfig) {
+      speechConfig.stopAfterMinutes = 0
+      saveSpeechConfig()
+    }
+  }
+
+  function setSpeechStopTimer(minutes: number) {
+    clearSpeechStopTimer(false)
+    const normalized = Math.max(0, Math.min(180, Math.round(minutes)))
+    speechConfig.stopAfterMinutes = normalized
+    saveSpeechConfig()
+    if (!normalized) {
+      speechStopAt.value = 0
+      return
+    }
+    speechStopAt.value = Date.now() + normalized * 60 * 1000
+    speechStopTimer = window.setTimeout(() => {
+      stopTTS()
+      clearSpeechStopTimer(false)
+      speechConfig.stopAfterMinutes = 0
+      saveSpeechConfig()
+      appStore.showToast('朗读已按定时设置停止', 'success')
+    }, normalized * 60 * 1000)
   }
 
   function startTTS(text?: string, options: TTSOptions = {}) {
@@ -385,6 +422,7 @@ export const useReaderStore = defineStore('reader', () => {
       currentUtterance = null
       if (resetCallbacks) {
         currentTTSOptions = null
+        clearSpeechStopTimer()
       }
     }
   }
@@ -420,18 +458,33 @@ export const useReaderStore = defineStore('reader', () => {
 
     const chapter = chapters.value[index]
 
-    if (!forceRefresh) {
-      const browserCached = await getBrowserCachedChapter(book.value.bookUrl, chapter.url).catch(() => null)
+    const browserCached = await getBrowserCachedChapter(book.value.bookUrl, chapter.url).catch(() => null)
+
+    if (!forceRefresh && browserCached) {
+      return browserCached
+    }
+
+    if (!appStore.isOnline) {
       if (browserCached) {
         return browserCached
       }
+      throw new Error('当前处于离线状态，且该章节未缓存到浏览器')
     }
 
-    const chapterContent = await getBookContent({
-      chapterUrl: chapter.url,
-      bookSourceUrl: book.value.origin,
-      refresh: forceRefresh ? 1 : 0,
-    })
+    let chapterContent = ''
+    try {
+      chapterContent = await getBookContent({
+        chapterUrl: chapter.url,
+        bookSourceUrl: book.value.origin,
+        refresh: forceRefresh ? 1 : 0,
+      })
+    } catch (error) {
+      if (browserCached) {
+        appStore.showToast('网络请求失败，已切换到本地缓存章节', 'warning')
+        return browserCached
+      }
+      throw error
+    }
 
     await setBrowserCachedChapter({
       bookUrl: book.value.bookUrl,
@@ -458,9 +511,18 @@ export const useReaderStore = defineStore('reader', () => {
         index,
       }).catch(() => { })
 
-      setTimeout(() => preloadNextChapter(index + 1), forceRefresh ? 1500 : 1000)
+      setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
     } finally {
       loading.value = false
+    }
+  }
+
+  async function preloadAroundChapter(index: number) {
+    if (!book.value) return
+    const targets = [index + 1, index + 2, index - 1]
+      .filter((target, pos, list) => target >= 0 && target < chapters.value.length && list.indexOf(target) === pos)
+    for (const target of targets) {
+      await preloadNextChapter(target)
     }
   }
 
@@ -481,21 +543,57 @@ export const useReaderStore = defineStore('reader', () => {
     } catch { /* ignore */ }
   }
 
+  function normalizeChapterTitle(title?: string) {
+    return (title || '')
+      .replace(/\s+/g, '')
+      .replace(/[：:,.，。！？!?\-—_()（）【】\[\]<>《》'"“”‘’]/g, '')
+      .toLowerCase()
+  }
+
+  function resolveChapterIndexByTitle(list: BookChapter[], targetTitle?: string, fallbackIndex = 0) {
+    if (!list.length) return 0
+    const normalizedTarget = normalizeChapterTitle(targetTitle)
+    if (!normalizedTarget) {
+      return Math.max(0, Math.min(list.length - 1, fallbackIndex))
+    }
+
+    const exactIndex = list.findIndex((chapter) => normalizeChapterTitle(chapter.title) === normalizedTarget)
+    if (exactIndex >= 0) return exactIndex
+
+    const partialIndex = list.findIndex((chapter) => {
+      const title = normalizeChapterTitle(chapter.title)
+      return title.includes(normalizedTarget) || normalizedTarget.includes(title)
+    })
+    if (partialIndex >= 0) return partialIndex
+
+    return Math.max(0, Math.min(list.length - 1, fallbackIndex))
+  }
+
   /* ─── Switch Source ─── */
   async function switchSource(newUrl: string, sourceUrl: string) {
     if (!book.value) return
+    const previousChapterTitle = currentChapter.value?.title || book.value.durChapterTitle
+    const previousIndex = currentIndex.value
+    const previousProgress = chapterScrollProgress.value
     loading.value = true
     try {
-      await apiSetBookSource({
+      const updatedBook = await apiSetBookSource({
         bookUrl: book.value.bookUrl,
         newUrl,
         bookSourceUrl: sourceUrl,
       })
-      // Fetch updated book and reload
-      const updatedBook = await getShelfBook(book.value.bookUrl)
-      if (updatedBook) {
-        await loadBook(updatedBook)
-      }
+      if (!updatedBook) return null
+
+      await loadBook(updatedBook)
+      const targetIndex = resolveChapterIndexByTitle(
+        chapters.value,
+        previousChapterTitle,
+        typeof updatedBook.durChapterIndex === 'number' ? updatedBook.durChapterIndex : previousIndex,
+      )
+      await loadChapter(targetIndex)
+      setChapterScrollProgress(previousProgress)
+      await shelfStore.fetchBooks().catch(() => undefined)
+      return updatedBook
     } finally {
       loading.value = false
     }
@@ -508,6 +606,7 @@ export const useReaderStore = defineStore('reader', () => {
       const chapterContent = await fetchChapterContent(currentIndex.value, true)
       if (chapterContent == null) return
       setActiveChapterState(currentIndex.value, chapterContent, chapterScrollProgress.value)
+      void preloadAroundChapter(currentIndex.value)
     } finally {
       loading.value = false
     }
@@ -570,6 +669,12 @@ export const useReaderStore = defineStore('reader', () => {
     await fetchBookmarks()
   }
 
+  async function removeBookmarks(items: Bookmark[]) {
+    if (!items.length) return
+    await apiDeleteBookmarks(items)
+    await fetchBookmarks()
+  }
+
   function clear() {
     book.value = null
     chapters.value = []
@@ -598,11 +703,11 @@ export const useReaderStore = defineStore('reader', () => {
     themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
     autoReading, autoReadingTimer, toggleAutoReading, stopAutoReading,
     activePanel, togglePanel, closePanel,
-    bookmarks, fetchBookmarks, addBookmark, removeBookmark,
+    bookmarks, fetchBookmarks, addBookmark, removeBookmark, removeBookmarks,
     replaceRules, fetchReplaceRules,
-    switchSource,
+    switchSource, preloadNextChapter, preloadAroundChapter,
     isSpeaking, isPaused, startTTS, pauseTTS, stopTTS,
-    voiceList, speechConfig, fetchVoices, setVoiceName, setSpeechRate, setSpeechPitch,
+    voiceList, speechConfig, speechStopAt, fetchVoices, setVoiceName, setSpeechRate, setSpeechPitch, setSpeechStopTimer, clearSpeechStopTimer,
     displayContent,
     isAutoScrolling,
   }

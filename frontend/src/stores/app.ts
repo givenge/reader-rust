@@ -61,6 +61,11 @@ export const useAppStore = defineStore('app', () => {
   const showLoginModal = ref(false)
   const showSettingsDrawer = ref(false)
   const showSourceManager = ref(false)
+  const isOnline = ref(typeof navigator !== 'undefined' ? navigator.onLine : true)
+  const pwaReady = ref(false)
+  const pwaUpdateAvailable = ref(false)
+  const deferredInstallPrompt = ref<any>(null)
+  const waitingServiceWorker = ref<ServiceWorker | null>(null)
 
   // ─── Toast ───
   const toasts = ref<Array<{ id: number; message: string; type: string }>>([])
@@ -74,11 +79,47 @@ export const useAppStore = defineStore('app', () => {
     }, 3000)
   }
 
+  function setOnlineStatus(value: boolean) {
+    isOnline.value = value
+  }
+
+  function setPwaReady(value: boolean) {
+    pwaReady.value = value
+  }
+
+  function setPwaUpdateAvailable(value: boolean) {
+    pwaUpdateAvailable.value = value
+  }
+
+  function setWaitingServiceWorker(value: ServiceWorker | null) {
+    waitingServiceWorker.value = value
+  }
+
+  function setDeferredInstallPrompt(value: any) {
+    deferredInstallPrompt.value = value
+  }
+
+  async function installPwa() {
+    if (!deferredInstallPrompt.value) return false
+    deferredInstallPrompt.value.prompt()
+    const result = await deferredInstallPrompt.value.userChoice.catch(() => null)
+    deferredInstallPrompt.value = null
+    return result?.outcome === 'accepted'
+  }
+
+  function applyPwaUpdate() {
+    if (!waitingServiceWorker.value) return false
+    waitingServiceWorker.value.postMessage({ type: 'SKIP_WAITING' })
+    return true
+  }
+
   return {
     theme, setTheme, toggleTheme,
     userInfo, isSecureMode, needSecureKey, isLoggedIn,
     fetchUserInfo, setUser, clearUser,
     showLoginModal, showSettingsDrawer, showSourceManager,
+    isOnline, pwaReady, pwaUpdateAvailable, deferredInstallPrompt, waitingServiceWorker,
+    setOnlineStatus, setPwaReady, setPwaUpdateAvailable, setDeferredInstallPrompt, setWaitingServiceWorker, installPwa, applyPwaUpdate,
     toasts, showToast,
   }
 })

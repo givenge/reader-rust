@@ -41,7 +41,7 @@
 
       <div v-else class="cache-sections">
         <div class="info-card">
-          <p>服务端缓存保存在后端存储目录；浏览器缓存保存在当前设备的 IndexedDB，可用于本机离线阅读。</p>
+          <p>服务端缓存保存在后端存储目录；浏览器缓存保存在当前设备的 IndexedDB。断网时阅读页会优先读取浏览器已缓存章节。</p>
         </div>
 
         <section class="cache-section">
@@ -294,6 +294,8 @@ function stopWorking() {
   flex: 1;
   padding: 24px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .summary-grid {

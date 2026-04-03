@@ -189,7 +189,7 @@ async function handleSetGroup(groupId: number) {
 
 <style scoped>
 .home-view {
-  min-height: calc(100vh - var(--header-height));
+  min-height: calc(100dvh - var(--header-height) - var(--safe-area-top));
   scrollbar-width: none;
   -ms-overflow-style: none;
 }

@@ -57,6 +57,33 @@
             </div>
           </section>
 
+          <section class="drawer-section">
+            <h3 class="section-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M12 16V4" />
+                <path d="m7 9 5-5 5 5" />
+                <path d="M20 16.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5" />
+              </svg>
+              应用
+            </h3>
+            <div class="status-card">
+              <span>{{ appStore.isOnline ? '在线' : '离线' }}</span>
+              <small>{{ appStore.pwaReady ? '已启用离线外壳缓存' : '离线外壳未启用' }}</small>
+            </div>
+            <div v-if="appStore.pwaUpdateAvailable" class="status-card accent">
+              <span>发现新版本</span>
+              <small>刷新后可使用最新离线资源</small>
+            </div>
+            <div class="btn-group">
+              <button class="action-btn" :disabled="!appStore.deferredInstallPrompt" @click="handleInstallPwa">
+                安装到主屏幕
+              </button>
+              <button class="action-btn primary" :disabled="!appStore.pwaUpdateAvailable" @click="handleApplyUpdate">
+                更新应用
+              </button>
+            </div>
+          </section>
+
           <!-- Bookshelf Section -->
           <section class="drawer-section">
             <h3 class="section-title">
@@ -166,6 +193,22 @@ function refreshCache() {
 function setTheme(t: 'light' | 'dark') {
   appStore.setTheme(t)
 }
+
+async function handleInstallPwa() {
+  const accepted = await appStore.installPwa()
+  if (!accepted) {
+    appStore.showToast('当前环境暂不支持安装，或用户已取消', 'warning')
+    return
+  }
+  appStore.showToast('安装请求已提交', 'success')
+}
+
+function handleApplyUpdate() {
+  const ok = appStore.applyPwaUpdate()
+  if (!ok) {
+    appStore.showToast('当前没有可应用的新版本', 'warning')
+  }
+}
 </script>
 
 <style scoped>
@@ -194,7 +237,7 @@ function setTheme(t: 'light' | 'dark') {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-5) var(--space-6);
+  padding: calc(var(--space-5) + var(--safe-area-top)) calc(var(--space-6) + var(--safe-area-right)) var(--space-5) var(--space-6);
   border-bottom: 1px solid var(--color-border-light);
   flex-shrink: 0;
 }
@@ -229,7 +272,15 @@ function setTheme(t: 'light' | 'dark') {
 .drawer-body {
   flex: 1;
   overflow-y: auto;
-  padding: var(--space-4) var(--space-6);
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: var(--space-4) calc(var(--space-6) + var(--safe-area-right)) calc(var(--space-4) + var(--safe-area-bottom)) var(--space-6);
+}
+
+@media (max-width: 768px) {
+  .settings-drawer {
+    width: min(420px, 92vw);
+  }
 }
 
 .drawer-section {
@@ -350,6 +401,35 @@ function setTheme(t: 'light' | 'dark') {
 .theme-toggle {
   display: flex;
   gap: var(--space-2);
+}
+
+.status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-3);
+  background: var(--color-bg-sunken);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+}
+
+.status-card span {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.status-card small {
+  color: var(--color-text-tertiary);
+}
+
+.status-card.accent {
+  background: rgba(201, 127, 58, 0.12);
+  border: 1px solid rgba(201, 127, 58, 0.18);
+}
+
+.action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .theme-option {

@@ -184,15 +184,21 @@ async function readChapter(index: number) {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-6);
+  padding:
+    calc(var(--space-6) + var(--safe-area-top))
+    calc(var(--space-6) + var(--safe-area-right))
+    calc(var(--space-6) + var(--safe-area-bottom))
+    calc(var(--space-6) + var(--safe-area-left));
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .detail-modal {
   width: 100%;
   max-width: 600px;
-  max-height: 85vh;
+  max-height: min(85vh, calc(100dvh - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: var(--color-bg-elevated);
   border-radius: var(--radius-xl);
   padding: var(--space-8);
@@ -202,7 +208,7 @@ async function readChapter(index: number) {
 
 .modal-close {
   position: absolute;
-  top: var(--space-4);
+  top: max(var(--space-4), calc(var(--safe-area-top) * 0.35));
   right: var(--space-4);
   width: 32px;
   height: 32px;
@@ -330,8 +336,16 @@ async function readChapter(index: number) {
 .chapter-list {
   max-height: 300px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-md);
+}
+
+@media (max-width: 768px) {
+  .detail-modal {
+    padding: var(--space-6);
+    border-radius: 20px;
+  }
 }
 
 .chapter-item {

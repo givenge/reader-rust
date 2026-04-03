@@ -104,6 +104,8 @@ async function openBook(book: Book) {
   flex: 1;
   overflow-y: auto;
   padding: 12px 0;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .shelf-item {

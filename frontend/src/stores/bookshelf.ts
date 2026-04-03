@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import {
-  getBookshelf,
+  getBookshelfWithCacheInfo,
   getBookGroups,
   deleteBook as apiDeleteBook,
   deleteBooks as apiDeleteBooks,
@@ -10,7 +10,7 @@ import {
   deleteBookGroup as apiDeleteBookGroup,
 } from '../api/bookshelf'
 import type { Book, BookGroup, SearchBook } from '../types'
-import { deleteBrowserBookCache } from '../utils/browserCache'
+import { deleteBrowserBookCache, listBrowserCacheSummary } from '../utils/browserCache'
 
 export const useBookshelfStore = defineStore('bookshelf', () => {
   // ─── Bookshelf ───
@@ -21,7 +21,15 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   async function fetchBooks() {
     loading.value = true
     try {
-      books.value = await getBookshelf()
+      const [serverBooks, browserSummaries] = await Promise.all([
+        getBookshelfWithCacheInfo(),
+        listBrowserCacheSummary().catch(() => []),
+      ])
+      const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
+      books.value = serverBooks.map((book) => ({
+        ...book,
+        browserCachedChapterCount: browserMap.get(book.bookUrl) || 0,
+      }))
     } finally {
       loading.value = false
     }
@@ -30,7 +38,15 @@ export const useBookshelfStore = defineStore('bookshelf', () => {
   async function refreshBooks() {
     refreshing.value = true
     try {
-      books.value = await getBookshelf()
+      const [serverBooks, browserSummaries] = await Promise.all([
+        getBookshelfWithCacheInfo(),
+        listBrowserCacheSummary().catch(() => []),
+      ])
+      const browserMap = new Map(browserSummaries.map((item) => [item.bookUrl, item.cachedChapterCount]))
+      books.value = serverBooks.map((book) => ({
+        ...book,
+        browserCachedChapterCount: browserMap.get(book.bookUrl) || 0,
+      }))
     } finally {
       refreshing.value = false
     }

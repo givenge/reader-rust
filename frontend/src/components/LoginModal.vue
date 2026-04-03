@@ -129,7 +129,11 @@ async function handleSubmit() {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-6);
+  padding:
+    calc(var(--space-6) + var(--safe-area-top))
+    calc(var(--space-6) + var(--safe-area-right))
+    calc(var(--space-6) + var(--safe-area-bottom))
+    calc(var(--space-6) + var(--safe-area-left));
 }
 
 .login-modal {
@@ -140,11 +144,14 @@ async function handleSubmit() {
   padding: var(--space-8);
   position: relative;
   box-shadow: var(--shadow-xl);
+  max-height: min(720px, calc(100dvh - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-close {
   position: absolute;
-  top: var(--space-4);
+  top: max(var(--space-4), calc(var(--safe-area-top) * 0.35));
   right: var(--space-4);
   width: 32px;
   height: 32px;
@@ -254,6 +261,13 @@ async function handleSubmit() {
 .submit-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+@media (max-width: 768px) {
+  .login-modal {
+    padding: var(--space-6);
+    border-radius: 20px;
+  }
 }
 
 .btn-spinner {

@@ -80,7 +80,7 @@ export function setBookSource(params: {
   newUrl: string
   bookSourceUrl: string
 }) {
-  return http.post<string>('/setBookSource', params).then((r) => r.data)
+  return http.post<Book>('/setBookSource', params).then((r) => r.data)
 }
 
 // ─── Cover helper ───

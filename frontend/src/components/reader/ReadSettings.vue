@@ -222,6 +222,17 @@
         </div>
       </div>
 
+      <div class="setting-row setting-row-top">
+        <label>定时停止</label>
+        <div class="btn-group">
+          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 0 }" @click="store.setSpeechStopTimer(0)">关闭</button>
+          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 15 }" @click="store.setSpeechStopTimer(15)">15分钟</button>
+          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 30 }" @click="store.setSpeechStopTimer(30)">30分钟</button>
+          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 60 }" @click="store.setSpeechStopTimer(60)">60分钟</button>
+          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 120 }" @click="store.setSpeechStopTimer(120)">120分钟</button>
+        </div>
+      </div>
+
       <div class="settings-sep"></div>
 
       <!-- 更多操作 -->
@@ -283,6 +294,7 @@ onMounted(() => {
   overflow-y: auto;
   padding: 24px;
   transition: background 0.3s, color 0.3s;
+  -webkit-overflow-scrolling: touch;
 }
 
 .settings-header {
@@ -463,5 +475,72 @@ onMounted(() => {
   border-left: 1px solid rgba(0,0,0,0.08);
   border-right: 1px solid rgba(0,0,0,0.08);
   padding: 6px 0;
+}
+
+@media (max-width: 420px) {
+  .read-settings {
+    padding: 16px;
+  }
+
+  .settings-header {
+    align-items: center;
+    gap: 8px;
+  }
+
+  .settings-title {
+    font-size: 18px;
+  }
+
+  .reset-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .setting-row {
+    align-items: center;
+    gap: 12px;
+  }
+
+  .setting-row label {
+    min-width: 60px;
+    font-size: 13px;
+  }
+
+  .btn-group {
+    gap: 6px;
+    flex: 0 1 auto;
+  }
+
+  .stepper,
+  .voice-select,
+  .theme-swatches {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .stepper {
+    width: auto;
+    display: inline-flex;
+  }
+
+  .opt-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .step-btn {
+    min-width: 36px;
+    padding: 6px 10px;
+  }
+
+  .step-val {
+    min-width: 42px;
+    font-size: 13px;
+  }
+
+  .voice-select {
+    width: auto;
+  }
 }
 </style>

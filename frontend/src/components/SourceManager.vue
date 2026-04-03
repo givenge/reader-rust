@@ -443,12 +443,16 @@ watch(() => props.modelValue, (v) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-6);
+  padding:
+    calc(var(--space-6) + var(--safe-area-top))
+    calc(var(--space-6) + var(--safe-area-right))
+    calc(var(--space-6) + var(--safe-area-bottom))
+    calc(var(--space-6) + var(--safe-area-left));
 }
 
 .source-modal {
   width: min(1120px, 100%);
-  max-height: 88vh;
+  max-height: min(88vh, calc(100dvh - var(--safe-area-top) - var(--safe-area-bottom) - 32px));
   background: var(--color-bg-elevated);
   border-radius: var(--radius-xl);
   display: flex;
@@ -846,6 +850,39 @@ watch(() => props.modelValue, (v) => {
   .subscription-item {
     flex-direction: column;
     align-items: stretch;
+  }
+}
+
+@media (max-width: 420px) {
+  .modal-container {
+    padding:
+      calc(8px + var(--safe-area-top))
+      calc(8px + var(--safe-area-right))
+      calc(8px + var(--safe-area-bottom))
+      calc(8px + var(--safe-area-left));
+  }
+
+  .source-modal {
+    border-radius: 20px;
+  }
+
+  .modal-header {
+    padding: calc(var(--space-4) + var(--safe-area-top)) var(--space-4) var(--space-4);
+  }
+
+  .toolbar,
+  .remote-panel,
+  .filter-bar,
+  .content-grid,
+  .modal-footer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .action-btn {
+    min-height: 36px;
+    padding: 8px 12px;
+    font-size: 13px;
   }
 }
 </style>

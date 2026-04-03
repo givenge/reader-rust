@@ -240,6 +240,8 @@ async function handleDelete(rule: ReplaceRule) {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .loading, .empty {
@@ -311,6 +313,8 @@ input:checked + .slider:before { transform: translateX(16px); }
   display: flex;
   flex-direction: column;
   padding: 20px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .edit-header h4 { margin: 0 0 16px 0; }

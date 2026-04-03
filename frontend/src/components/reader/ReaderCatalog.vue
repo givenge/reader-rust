@@ -22,6 +22,17 @@
       </button>
     </div>
 
+    <div v-if="activeTab === 'bookmarks'" class="bookmark-toolbar">
+      <button class="bookmark-action primary" @click="addCurrentBookmark">添加当前页书签</button>
+      <button
+        class="bookmark-action"
+        :class="{ danger: bookmarkEditMode && selectedBookmarkKeys.size > 0 }"
+        @click="handleBatchAction"
+      >
+        {{ bookmarkEditMode ? (selectedBookmarkKeys.size ? `删除选中(${selectedBookmarkKeys.size})` : '完成') : '批量管理' }}
+      </button>
+    </div>
+
     <!-- Chapters List -->
     <div v-show="activeTab === 'chapters'" class="list-container" ref="listRef">
       <div v-if="store.chaptersLoading" class="loading">加载目录中...</div>
@@ -46,14 +57,23 @@
         v-for="(bm, idx) in store.bookmarks"
         :key="idx"
         class="list-item bookmark-item"
+        :class="{ selected: isBookmarkSelected(bm) }"
         @click="goToBookmark(bm)"
       >
+        <button
+          v-if="bookmarkEditMode"
+          class="bookmark-check"
+          :class="{ checked: isBookmarkSelected(bm) }"
+          @click.stop="toggleBookmarkSelection(bm)"
+        >
+          ✓
+        </button>
         <div class="bm-header">
           <span class="bm-chapter">{{ bm.chapterName }}</span>
           <span class="bm-time">{{ formatDate(bm.time) }}</span>
         </div>
         <div class="bm-snippet">{{ bm.bookText }}</div>
-        <button class="bm-delete" @click.stop="store.removeBookmark(bm)">
+        <button v-if="!bookmarkEditMode" class="bm-delete" @click.stop="store.removeBookmark(bm)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
         </button>
       </div>
@@ -62,18 +82,37 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, watch } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useAppStore } from '../../stores/app'
 import type { Bookmark } from '../../types'
 
+const props = withDefaults(defineProps<{
+  initialTab?: 'chapters' | 'bookmarks'
+}>(), {
+  initialTab: 'chapters',
+})
+
 const store = useReaderStore()
+const appStore = useAppStore()
 const theme = computed(() => store.currentTheme)
-const activeTab = ref<'chapters' | 'bookmarks'>('chapters')
+const activeTab = ref<'chapters' | 'bookmarks'>(props.initialTab)
 const listRef = ref<HTMLElement>()
+const bookmarkEditMode = ref(false)
+const selectedBookmarkKeys = ref<Set<string>>(new Set())
 
 onMounted(() => {
+  activeTab.value = props.initialTab
   scrollToCurrent()
   store.fetchBookmarks()
+})
+
+watch(() => props.initialTab, (tab) => {
+  activeTab.value = tab
+  if (tab !== 'bookmarks') {
+    bookmarkEditMode.value = false
+    selectedBookmarkKeys.value.clear()
+  }
 })
 
 function scrollToCurrent() {
@@ -91,11 +130,53 @@ async function goToChapter(index: number) {
 }
 
 async function goToBookmark(bm: Bookmark) {
+  if (bookmarkEditMode.value) {
+    toggleBookmarkSelection(bm)
+    return
+  }
   if (bm.chapterIndex !== undefined) {
     await store.loadChapter(bm.chapterIndex)
     // Position scrolling could be added here if needed
     store.closePanel()
   }
+}
+
+function getBookmarkKey(bm: Bookmark) {
+  return `${bm.bookName}|${bm.bookAuthor}|${bm.chapterIndex}|${bm.chapterPos}|${bm.time}|${bm.bookText}`
+}
+
+function isBookmarkSelected(bm: Bookmark) {
+  return selectedBookmarkKeys.value.has(getBookmarkKey(bm))
+}
+
+function toggleBookmarkSelection(bm: Bookmark) {
+  const key = getBookmarkKey(bm)
+  if (selectedBookmarkKeys.value.has(key)) {
+    selectedBookmarkKeys.value.delete(key)
+  } else {
+    selectedBookmarkKeys.value.add(key)
+  }
+}
+
+async function addCurrentBookmark() {
+  await store.addBookmark()
+  appStore.showToast('已添加当前页书签', 'success')
+}
+
+async function handleBatchAction() {
+  if (!bookmarkEditMode.value) {
+    bookmarkEditMode.value = true
+    return
+  }
+  if (!selectedBookmarkKeys.value.size) {
+    bookmarkEditMode.value = false
+    return
+  }
+  const items = store.bookmarks.filter((bookmark) => selectedBookmarkKeys.value.has(getBookmarkKey(bookmark)))
+  await store.removeBookmarks(items)
+  selectedBookmarkKeys.value.clear()
+  bookmarkEditMode.value = false
+  appStore.showToast(`已删除 ${items.length} 条书签`, 'success')
 }
 
 function formatDate(ts?: number) {
@@ -164,6 +245,35 @@ function formatDate(ts?: number) {
   flex: 1;
   overflow-y: auto;
   padding: 8px 0;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.bookmark-toolbar {
+  display: flex;
+  gap: 10px;
+  padding: 12px 16px 0;
+  flex-wrap: wrap;
+}
+
+.bookmark-action {
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.bookmark-action.primary {
+  border-color: var(--color-primary, #c97f3a);
+  color: var(--color-primary, #c97f3a);
+}
+
+.bookmark-action.danger {
+  border-color: #ef4444;
+  color: #ef4444;
 }
 
 .loading, .empty {
@@ -209,6 +319,30 @@ function formatDate(ts?: number) {
   flex-direction: column;
   gap: 6px;
   position: relative;
+  padding-left: 48px;
+}
+
+.bookmark-item.selected {
+  background: rgba(201, 127, 58, 0.08);
+}
+
+.bookmark-check {
+  position: absolute;
+  left: 16px;
+  top: 16px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.15);
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+}
+
+.bookmark-check.checked {
+  background: var(--color-primary, #c97f3a);
+  border-color: var(--color-primary, #c97f3a);
+  color: #fff;
 }
 
 .bm-header {

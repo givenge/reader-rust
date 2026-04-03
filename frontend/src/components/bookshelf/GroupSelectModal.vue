@@ -82,6 +82,11 @@ async function handleCreate() {
   display: flex;
   align-items: center;
   justify-content: center;
+  padding:
+    calc(16px + var(--safe-area-top))
+    calc(16px + var(--safe-area-right))
+    calc(16px + var(--safe-area-bottom))
+    calc(16px + var(--safe-area-left));
   z-index: 1000;
 }
 
@@ -92,6 +97,9 @@ async function handleCreate() {
   border-radius: var(--radius-2xl);
   box-shadow: var(--shadow-2xl);
   overflow: hidden;
+  max-height: calc(100dvh - var(--safe-area-top) - var(--safe-area-bottom) - 32px);
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-header {
@@ -113,6 +121,8 @@ async function handleCreate() {
 
 .modal-body {
   padding: var(--space-2);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .group-list {

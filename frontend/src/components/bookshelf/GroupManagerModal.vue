@@ -107,7 +107,11 @@ async function deleteGroup(groupId: number, groupName: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding:
+    calc(24px + var(--safe-area-top))
+    calc(24px + var(--safe-area-right))
+    calc(24px + var(--safe-area-bottom))
+    calc(24px + var(--safe-area-left));
   z-index: 1001;
 }
 
@@ -117,6 +121,9 @@ async function deleteGroup(groupId: number, groupName: string) {
   border-radius: 24px;
   box-shadow: var(--shadow-xl);
   overflow: hidden;
+  max-height: calc(100dvh - var(--safe-area-top) - var(--safe-area-bottom) - 32px);
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-header {
@@ -151,6 +158,8 @@ async function deleteGroup(groupId: number, groupName: string) {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .create-row,
