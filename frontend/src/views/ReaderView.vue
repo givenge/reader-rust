@@ -255,7 +255,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick, defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
 import { useAppStore } from '../stores/app'
@@ -266,21 +266,22 @@ import type { Book } from '../types'
 
 import ReaderSidebar from '../components/reader/ReaderSidebar.vue'
 import ReaderToolbar from '../components/reader/ReaderToolbar.vue'
-import ReaderCatalog from '../components/reader/ReaderCatalog.vue'
-import ReadSettings from '../components/reader/ReadSettings.vue'
-import ReaderBookshelf from '../components/reader/ReaderBookshelf.vue'
-import ReaderSource from '../components/reader/ReaderSource.vue'
-import ReplaceRuleManager from '../components/reader/ReplaceRuleManager.vue'
-import CacheManager from '../components/reader/CacheManager.vue'
 import ReaderMobileControls from '../components/reader/ReaderMobileControls.vue'
-import BookDetailModal from '../components/BookDetailModal.vue'
-import ReaderTtsPanel from '../components/reader/ReaderTtsPanel.vue'
-import ReaderSearchPanel from '../components/reader/ReaderSearchPanel.vue'
 import { useReaderSearch } from '../composables/useReaderSearch'
 import { useReaderSelection } from '../composables/useReaderSelection'
 import { useHorizontalPaging } from '../composables/useHorizontalPaging'
 import { useContinuousReading } from '../composables/useContinuousReading'
 import { useReaderAutoPlayback } from '../composables/useReaderAutoPlayback'
+
+const ReaderCatalog = defineAsyncComponent(() => import('../components/reader/ReaderCatalog.vue'))
+const ReadSettings = defineAsyncComponent(() => import('../components/reader/ReadSettings.vue'))
+const ReaderBookshelf = defineAsyncComponent(() => import('../components/reader/ReaderBookshelf.vue'))
+const ReaderSource = defineAsyncComponent(() => import('../components/reader/ReaderSource.vue'))
+const ReplaceRuleManager = defineAsyncComponent(() => import('../components/reader/ReplaceRuleManager.vue'))
+const CacheManager = defineAsyncComponent(() => import('../components/reader/CacheManager.vue'))
+const BookDetailModal = defineAsyncComponent(() => import('../components/BookDetailModal.vue'))
+const ReaderTtsPanel = defineAsyncComponent(() => import('../components/reader/ReaderTtsPanel.vue'))
+const ReaderSearchPanel = defineAsyncComponent(() => import('../components/reader/ReaderSearchPanel.vue'))
 
 const router = useRouter()
 const store = useReaderStore()
@@ -309,7 +310,11 @@ const isContinuousMode = computed(() =>
   config.value.readMethod === '上下滚动' || config.value.readMethod === '上下滚动2',
 )
 const isHorizontalPageMode = computed(() => config.value.readMethod === '左右翻页')
-const disableSystemCallout = computed(() => isMobile.value && config.value.selectAction === 'popup')
+const disableSystemCallout = computed(() => {
+  const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
+  const isIOS = /iPhone|iPad|iPod/i.test(ua)
+  return isIOS && isMobile.value && config.value.selectAction === 'popup'
+})
 const touchState = ref({
   startX: 0,
   startY: 0,
@@ -358,6 +363,7 @@ const {
   scheduleSelectionMenuUpdate,
   handleMouseUpSelection,
   handleTouchEndSelection,
+  handleSelectionChange,
   addSelectionBookmark,
   addSelectionReplaceRule,
   clearSelectionState,
@@ -954,13 +960,19 @@ async function openInfo() {
 }
 
 onMounted(async () => {
+  appStore.startReadingSession()
   if (!store.book) {
-    router.replace('/')
-    return
+    const restored = await store.restorePersistedSession()
+    if (!restored) {
+      router.replace('/')
+      return
+    }
+    appStore.showToast('已恢复最近阅读的离线章节', 'success')
   }
   window.addEventListener('keydown', handleKeydown)
   document.addEventListener('mouseup', handleMouseUpSelection)
   document.addEventListener('touchend', handleTouchEndSelection)
+  document.addEventListener('selectionchange', handleSelectionChange)
   checkMedia()
   window.addEventListener('resize', checkMedia)
   store.fetchVoices()
@@ -984,9 +996,11 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  appStore.stopReadingSession()
   window.removeEventListener('keydown', handleKeydown)
   document.removeEventListener('mouseup', handleMouseUpSelection)
   document.removeEventListener('touchend', handleTouchEndSelection)
+  document.removeEventListener('selectionchange', handleSelectionChange)
   window.removeEventListener('resize', checkMedia)
   if (speechTimerTicker) clearInterval(speechTimerTicker)
   disposeSelection()

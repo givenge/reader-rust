@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, reactive, watch } from 'vue'
 import { useAppStore } from './app'
 import { useBookshelfStore } from './bookshelf'
 import {
@@ -15,9 +15,18 @@ import {
   deleteBookmarks as apiDeleteBookmarks,
 } from '../api/bookmark'
 import { getReplaceRules } from '../api/replaceRule'
-import * as OpenCC from 'opencc-js'
 import type { Book, BookChapter, Bookmark, ReplaceRule } from '../types'
 import { getBrowserCachedChapter, setBrowserCachedChapter } from '../utils/browserCache'
+
+const READER_SESSION_KEY = 'reader-last-session'
+
+interface PersistedReaderSession {
+  book: Book
+  chapters: BookChapter[]
+  currentIndex: number
+  chapterScrollProgress: number
+  updatedAt: number
+}
 
 /* ─── Reading config type ─── */
 export interface ReadConfig {
@@ -169,6 +178,25 @@ export const useReaderStore = defineStore('reader', () => {
     saveConfig()
   }
 
+  const openccConverter = ref<((text: string) => string) | null>(null)
+  let openccLoading: Promise<void> | null = null
+
+  async function ensureOpenCCLoaded() {
+    if (openccConverter.value || openccLoading) return openccLoading || Promise.resolve()
+    openccLoading = import('opencc-js')
+      .then((OpenCC) => {
+        // @ts-ignore library runtime shape
+        openccConverter.value = OpenCC.Converter({ from: 'cn', to: 't' })
+      })
+      .catch(() => {
+        openccConverter.value = null
+      })
+      .finally(() => {
+        openccLoading = null
+      })
+    return openccLoading
+  }
+
   /* ─── Theme ─── */
   const themeIndex = ref(parseInt(localStorage.getItem('reader-themeIndex') || '0'))
   const isNight = computed({
@@ -196,12 +224,6 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   /* ─── Chinese Conversion (OpenCC) ─── */
-  const converter = computed(() => {
-    if (config.chineseMode === 'simplified') return null
-    // @ts-ignore - for dynamic lib loading or implicit any if needed, but we have d.ts now
-    return OpenCC.Converter({ from: 'cn', to: 't' }) // 't' for traditional
-  })
-
   /* ─── Content Filtering (Replace Rules) ─── */
   function applyReplaceRules(text: string) {
     if (!text) return ''
@@ -249,14 +271,64 @@ export const useReaderStore = defineStore('reader', () => {
   }
 
   function convertContent(text: string) {
-    if (!text || !converter.value) return text
-    return converter.value(text)
+    if (!text || !openccConverter.value) return text
+    return openccConverter.value(text)
   }
 
   const displayContent = computed(() => {
     let text = applyReplaceRules(content.value)
     return convertContent(text)
   })
+
+  watch(
+    () => config.chineseMode,
+    (mode) => {
+      if (mode === 'traditional') {
+        void ensureOpenCCLoaded()
+      }
+    },
+    { immediate: true },
+  )
+
+  function saveReaderSession() {
+    if (!book.value || !chapters.value.length) return
+    const payload: PersistedReaderSession = {
+      book: book.value,
+      chapters: chapters.value,
+      currentIndex: currentIndex.value,
+      chapterScrollProgress: chapterScrollProgress.value,
+      updatedAt: Date.now(),
+    }
+    localStorage.setItem(READER_SESSION_KEY, JSON.stringify(payload))
+  }
+
+  function getPersistedReaderSession(): PersistedReaderSession | null {
+    try {
+      const raw = localStorage.getItem(READER_SESSION_KEY)
+      if (!raw) return null
+      return JSON.parse(raw) as PersistedReaderSession
+    } catch {
+      return null
+    }
+  }
+
+  async function restorePersistedSession() {
+    const session = getPersistedReaderSession()
+    if (!session?.book || !session.chapters?.length) return false
+
+    book.value = session.book
+    chapters.value = session.chapters
+
+    const nextIndex = Math.max(0, Math.min(session.currentIndex || 0, session.chapters.length - 1))
+    try {
+      const chapterContent = await fetchChapterContent(nextIndex)
+      if (chapterContent == null) return false
+      setActiveChapterState(nextIndex, chapterContent, session.chapterScrollProgress || 0)
+      return true
+    } catch {
+      return false
+    }
+  }
 
   /* ─── Auto reading ─── */
   const autoReading = ref(false)
@@ -430,6 +502,7 @@ export const useReaderStore = defineStore('reader', () => {
   /* ─── Book / chapter ops ─── */
   async function loadBook(b: Book) {
     book.value = b
+    appStore.markBookOpened(b.bookUrl)
     currentIndex.value = b.durChapterIndex || 0
     chaptersLoading.value = true
     try {
@@ -437,6 +510,7 @@ export const useReaderStore = defineStore('reader', () => {
         bookUrl: b.bookUrl,
         bookSourceUrl: b.origin,
       })
+      saveReaderSession()
     } finally {
       chaptersLoading.value = false
     }
@@ -447,6 +521,7 @@ export const useReaderStore = defineStore('reader', () => {
     content.value = chapterContent
     chapterScrollProgress.value = Math.max(0, Math.min(1, progress))
     localStorage.setItem('reader-currentIndex', String(index))
+    saveReaderSession()
   }
 
   async function fetchChapterContent(index: number, forceRefresh = false) {
@@ -505,6 +580,7 @@ export const useReaderStore = defineStore('reader', () => {
       if (chapterContent == null) return
 
       setActiveChapterState(index, chapterContent, 0)
+      appStore.markChapterRead(book.value.bookUrl, index, chapters.value.length)
 
       await saveBookProgress({
         bookUrl: book.value.bookUrl,
@@ -614,6 +690,7 @@ export const useReaderStore = defineStore('reader', () => {
 
   function setChapterScrollProgress(value: number) {
     chapterScrollProgress.value = Math.max(0, Math.min(1, value))
+    saveReaderSession()
   }
 
   async function nextChapter() {
@@ -680,6 +757,7 @@ export const useReaderStore = defineStore('reader', () => {
     chapters.value = []
     content.value = ''
     currentIndex.value = 0
+    chapterScrollProgress.value = 0
     stopAutoReading()
   }
 
@@ -699,6 +777,7 @@ export const useReaderStore = defineStore('reader', () => {
     currentChapter, hasNext, hasPrev, readingProgress,
     loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
     chapterScrollProgress, setChapterScrollProgress,
+    getPersistedReaderSession, restorePersistedSession,
     config, updateConfig, resetConfig, saveConfig,
     themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
     autoReading, autoReadingTimer, toggleAutoReading, stopAutoReading,

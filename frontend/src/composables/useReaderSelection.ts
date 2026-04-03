@@ -15,6 +15,7 @@ export function useReaderSelection(
 ) {
   const isTouchDevice = typeof window !== 'undefined'
     && ('ontouchstart' in window || navigator.maxTouchPoints > 0)
+  const isAndroid = typeof navigator !== 'undefined' && /Android/i.test(navigator.userAgent)
   const selectionMenu = ref({
     visible: false,
     text: '',
@@ -46,6 +47,10 @@ export function useReaderSelection(
     scheduleSelectionMenuUpdate(260)
   }
 
+  function handleSelectionChange() {
+    scheduleSelectionMenuUpdate(isAndroid ? 320 : 220)
+  }
+
   function updateSelectionMenu() {
     if (config.value.selectAction !== 'popup') {
       hideSelectionMenu()
@@ -58,7 +63,7 @@ export function useReaderSelection(
       hideSelectionMenu()
       return
     }
-    if (isTouchDevice && text.length < 4) {
+    if (isTouchDevice && text.length < (isAndroid ? 2 : 4)) {
       hideSelectionMenu()
       return
     }
@@ -154,6 +159,7 @@ export function useReaderSelection(
     scheduleSelectionMenuUpdate,
     handleMouseUpSelection,
     handleTouchEndSelection,
+    handleSelectionChange,
     updateSelectionMenu,
     addSelectionBookmark,
     addSelectionReplaceRule,

@@ -126,9 +126,16 @@ const selectedBook = ref<Book | SearchBook | null>(null)
 onMounted(async () => {
   await appStore.fetchUserInfo()
   await Promise.all([
-    shelfStore.fetchBooks(),
-    shelfStore.fetchGroups(),
+    shelfStore.fetchBooks().catch(() => undefined),
+    shelfStore.fetchGroups().catch(() => undefined),
   ])
+  if (!appStore.isOnline) {
+    const restored = await readerStore.restorePersistedSession()
+    if (restored) {
+      appStore.showToast('已恢复最近阅读的离线章节', 'success')
+      router.replace('/reader')
+    }
+  }
 })
 
 async function handleBookClick(book: Book | SearchBook) {

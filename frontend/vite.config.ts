@@ -20,5 +20,20 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules/opencc-js')) {
+            return 'opencc'
+          }
+          if (id.includes('node_modules')) {
+            return 'vendor'
+          }
+          if (id.includes('/src/components/reader/') || id.includes('/src/composables/useReader')) {
+            return 'reader-panels'
+          }
+        },
+      },
+    },
   },
 })

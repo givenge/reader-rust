@@ -112,6 +112,34 @@
           <section class="drawer-section">
             <h3 class="section-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M12 8v4l3 3" />
+                <circle cx="12" cy="12" r="9" />
+              </svg>
+              阅读统计
+            </h3>
+            <div class="stats-grid">
+              <div class="status-card">
+                <span>{{ appStore.readingStatsSummary.totalTimeText }}</span>
+                <small>累计阅读时长</small>
+              </div>
+              <div class="status-card">
+                <span>{{ appStore.readingStatsSummary.openedBooks }}</span>
+                <small>打开过的书籍</small>
+              </div>
+              <div class="status-card">
+                <span>{{ appStore.readingStatsSummary.readChapters }}</span>
+                <small>阅读章节数</small>
+              </div>
+              <div class="status-card">
+                <span>{{ appStore.readingStatsSummary.completedBooks }}</span>
+                <small>读完书籍数</small>
+              </div>
+            </div>
+          </section>
+
+          <section class="drawer-section">
+            <h3 class="section-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <circle cx="12" cy="12" r="4" />
                 <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41" />
               </svg>
@@ -430,6 +458,12 @@ function handleApplyUpdate() {
 .action-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
 }
 
 .theme-option {
