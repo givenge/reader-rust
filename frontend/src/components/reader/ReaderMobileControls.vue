@@ -98,9 +98,20 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useAppStore } from '../../stores/app'
 
 const store = useReaderStore()
-const theme = computed(() => store.currentTheme)
+const appStore = useAppStore()
+const theme = computed(() => {
+  if (store.isNight || appStore.theme === 'dark') {
+    return {
+      ...store.currentTheme,
+      popup: 'var(--color-bg-elevated)',
+      fontColor: 'var(--color-text)',
+    }
+  }
+  return store.currentTheme
+})
 
 defineProps<{ 
   show: boolean
@@ -128,15 +139,16 @@ defineEmits<{
   top: 0;
   left: 0;
   right: 0;
-  height: 56px;
+  min-height: 56px;
   background: var(--popup-bg);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
+  padding: calc(8px + var(--safe-area-top)) calc(16px + var(--safe-area-right)) 8px calc(16px + var(--safe-area-left));
   z-index: 20;
   box-shadow: 0 2px 10px rgba(0,0,0,0.05);
   color: var(--font-color);
+  box-sizing: border-box;
 }
 
 .m-top-item {
@@ -156,7 +168,7 @@ defineEmits<{
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 16px;
+  padding: 16px calc(16px + var(--safe-area-right)) calc(16px + var(--safe-area-bottom)) calc(16px + var(--safe-area-left));
   background: var(--popup-bg);
   z-index: 20;
   box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
@@ -164,6 +176,7 @@ defineEmits<{
   display: flex;
   flex-direction: column;
   gap: 16px;
+  box-sizing: border-box;
 }
 
 .progress-row {
@@ -229,16 +242,19 @@ defineEmits<{
 
 .m-float {
   position: absolute;
-  top: 50%;
+  top: calc(50% + (var(--safe-area-top) - var(--safe-area-bottom)) / 2);
   transform: translateY(-50%);
   display: flex;
   flex-direction: column;
   gap: 16px;
   z-index: 20;
+  max-height: calc(100% - var(--safe-area-top) - var(--safe-area-bottom) - 32px);
+  overflow: auto;
+  scrollbar-width: none;
 }
 
-.m-float-left { left: 16px; }
-.m-float-right { right: 16px; }
+.m-float-left { left: calc(16px + var(--safe-area-left)); }
+.m-float-right { right: calc(16px + var(--safe-area-right)); }
 
 .m-btn {
   width: 40px;
@@ -267,4 +283,8 @@ defineEmits<{
 
 .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
 .fade-enter-from, .fade-leave-to { opacity: 0; }
+
+.m-float::-webkit-scrollbar {
+  display: none;
+}
 </style>

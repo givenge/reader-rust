@@ -1,5 +1,5 @@
 <template>
-  <div class="reader-toolbar" :style="{ background: theme.popup }">
+  <div class="reader-toolbar" :style="{ background: theme.popup, color: theme.fontColor }">
     <button class="tb-btn" @click="$emit('bookmark')" title="书签">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z" /></svg>
     </button>
@@ -43,9 +43,19 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useReaderStore } from '../../stores/reader'
+import { useAppStore } from '../../stores/app'
 
 const store = useReaderStore()
-const theme = computed(() => store.currentTheme)
+const appStore = useAppStore()
+const theme = computed(() => {
+  if (store.isNight || appStore.theme === 'dark') {
+    return {
+      ...store.currentTheme,
+      popup: 'var(--color-bg-elevated)',
+    }
+  }
+  return store.currentTheme
+})
 
 defineProps<{
   isSpeaking?: boolean

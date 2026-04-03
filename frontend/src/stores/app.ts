@@ -2,20 +2,29 @@ import { defineStore } from 'pinia'
 import { ref, watch } from 'vue'
 import { getUserInfo } from '../api/user'
 import type { UserInfo } from '../types'
+import { applySystemTheme } from '../utils/systemUi'
 
 export const useAppStore = defineStore('app', () => {
   // ─── Theme ───
+  const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null
+  const legacyReaderNight = localStorage.getItem('reader-isNight') === 'true'
   const theme = ref<'light' | 'dark'>(
-    (localStorage.getItem('theme') as 'light' | 'dark') || 'light'
+    savedTheme || (legacyReaderNight ? 'dark' : 'light')
   )
 
+  function setTheme(value: 'light' | 'dark') {
+    theme.value = value
+    localStorage.setItem('theme', value)
+    applySystemTheme(value)
+  }
+
   function toggleTheme() {
-    theme.value = theme.value === 'light' ? 'dark' : 'light'
+    setTheme(theme.value === 'light' ? 'dark' : 'light')
   }
 
   watch(theme, (val) => {
-    document.documentElement.setAttribute('data-theme', val)
     localStorage.setItem('theme', val)
+    applySystemTheme(val)
   }, { immediate: true })
 
   // ─── User ───
@@ -66,7 +75,7 @@ export const useAppStore = defineStore('app', () => {
   }
 
   return {
-    theme, toggleTheme,
+    theme, setTheme, toggleTheme,
     userInfo, isSecureMode, needSecureKey, isLoggedIn,
     fetchUserInfo, setUser, clearUser,
     showLoginModal, showSettingsDrawer, showSourceManager,

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, reactive } from 'vue'
+import { useAppStore } from './app'
 import {
   getChapterList,
   getBookContent,
@@ -84,7 +85,7 @@ export const themePresets: ThemePreset[] = [
   { name: '粉白', body: '#f5e4e8', content: '#faf0f3', fontColor: '#4a2d36', popup: '#faf0f3' },
   { name: '浅灰', body: '#eaeaea', content: '#f5f5f5', fontColor: '#333', popup: '#f5f5f5' },
   { name: '暗灰', body: '#808080', content: '#999', fontColor: '#eee', popup: '#888' },
-  { name: '暗夜', body: '#1a1a2e', content: '#16213e', fontColor: '#c8c8c8', popup: '#1a1a2e' },
+  { name: '暗夜', body: '#141414', content: '#16213e', fontColor: '#c8c8c8', popup: '#141414' },
 ]
 
 /* ─── Font presets ─── */
@@ -123,6 +124,7 @@ function loadSpeechConfig(): SpeechConfig {
 }
 
 export const useReaderStore = defineStore('reader', () => {
+  const appStore = useAppStore()
   const book = ref<Book | null>(null)
   const chapters = ref<BookChapter[]>([])
   const currentIndex = ref(0)
@@ -165,7 +167,13 @@ export const useReaderStore = defineStore('reader', () => {
 
   /* ─── Theme ─── */
   const themeIndex = ref(parseInt(localStorage.getItem('reader-themeIndex') || '0'))
-  const isNight = ref(localStorage.getItem('reader-isNight') === 'true')
+  const isNight = computed({
+    get: () => appStore.theme === 'dark',
+    set: (value: boolean) => {
+      appStore.setTheme(value ? 'dark' : 'light')
+      localStorage.setItem('reader-isNight', String(value))
+    },
+  })
 
   const currentTheme = computed(() => {
     if (isNight.value) return themePresets[themePresets.length - 1]
@@ -181,7 +189,6 @@ export const useReaderStore = defineStore('reader', () => {
 
   function toggleNight() {
     isNight.value = !isNight.value
-    localStorage.setItem('reader-isNight', String(isNight.value))
   }
 
   /* ─── Chinese Conversion (OpenCC) ─── */

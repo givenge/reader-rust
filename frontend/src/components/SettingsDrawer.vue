@@ -164,9 +164,7 @@ function refreshCache() {
 }
 
 function setTheme(t: 'light' | 'dark') {
-  appStore.theme = t
-  document.documentElement.setAttribute('data-theme', t)
-  localStorage.setItem('theme', t)
+  appStore.setTheme(t)
 }
 </script>
 

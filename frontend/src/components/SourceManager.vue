@@ -461,7 +461,7 @@ watch(() => props.modelValue, (v) => {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  padding: var(--space-5) var(--space-6);
+  padding: calc(var(--space-5) + var(--safe-area-top)) var(--space-6) var(--space-5);
   border-bottom: 1px solid var(--color-border-light);
   flex-shrink: 0;
 }
@@ -816,13 +816,29 @@ watch(() => props.modelValue, (v) => {
 }
 
 @media (max-width: 900px) {
+  .modal-container {
+    align-items: stretch;
+    padding: 8px;
+  }
+
+  .source-modal {
+    width: 100%;
+    max-height: calc(100dvh - 16px);
+    border-radius: 24px;
+  }
+
   .content-grid {
     grid-template-columns: 1fr;
     overflow: auto;
   }
 
+  .source-list-wrapper {
+    min-height: 38vh;
+  }
+
   .editor-panel {
-    min-height: 360px;
+    min-height: 220px;
+    max-height: 32vh;
   }
 
   .remote-form,

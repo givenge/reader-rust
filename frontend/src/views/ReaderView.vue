@@ -17,7 +17,7 @@
         <div v-if="store.activePanel" class="reader-overlay" @click="store.closePanel()"></div>
       </Transition>
       <Transition name="slide-left">
-        <div v-if="store.activePanel" class="reader-drawer" :style="{ background: theme.popup }">
+        <div v-if="store.activePanel" class="reader-drawer" :style="{ background: chromeTheme.popup }">
           <ReaderCatalog v-if="store.activePanel === 'catalog'" />
           <ReadSettings v-else-if="store.activePanel === 'settings'" />
           <ReaderBookshelf v-else-if="store.activePanel === 'bookshelf'" />
@@ -66,7 +66,7 @@
 
     <!-- TTS Control Overlay -->
     <Transition name="slide-up">
-      <div v-if="store.isSpeaking" class="tts-controls" :style="{ background: theme.popup }">
+      <div v-if="store.isSpeaking" class="tts-controls" :style="{ background: chromeTheme.popup, color: chromeTheme.fontColor }">
         <div class="tts-info">正在朗读: {{ store.currentChapter?.title }}</div>
         <div class="tts-btns">
           <button @click="speechPrev">上一段</button>
@@ -219,7 +219,7 @@
 
     <!-- Chapter Search Overlay -->
     <Transition name="fade">
-      <div v-if="showSearch" class="reader-search-bar" :style="{ background: theme.popup }">
+      <div v-if="showSearch" class="reader-search-bar" :style="{ background: chromeTheme.popup, color: chromeTheme.fontColor }">
         <input 
           v-model="searchQuery" 
           placeholder="搜索章节内容..." 
@@ -243,8 +243,8 @@
         :style="{
           top: selectionMenu.top + 'px',
           left: selectionMenu.left + 'px',
-          background: theme.popup,
-          color: theme.fontColor,
+          background: chromeTheme.popup,
+          color: chromeTheme.fontColor,
         }"
       >
         <div class="selection-menu-text">{{ selectionMenu.text }}</div>
@@ -264,6 +264,7 @@ import { useRouter } from 'vue-router'
 import { useReaderStore, fontPresets } from '../stores/reader'
 import { useAppStore } from '../stores/app'
 import { saveReplaceRule } from '../api/replaceRule'
+import { applySystemTheme } from '../utils/systemUi'
 
 import ReaderSidebar from '../components/reader/ReaderSidebar.vue'
 import ReaderToolbar from '../components/reader/ReaderToolbar.vue'
@@ -281,6 +282,16 @@ const appStore = useAppStore()
 
 const config = computed(() => store.config)
 const theme = computed(() => store.currentTheme)
+const chromeTheme = computed(() => {
+  if (store.isNight || appStore.theme === 'dark') {
+    return {
+      ...store.currentTheme,
+      popup: 'var(--color-bg-elevated)',
+      fontColor: 'var(--color-text)',
+    }
+  }
+  return store.currentTheme
+})
 
 const scrollContainerRef = ref<HTMLElement>()
 const chapterTextRef = ref<HTMLElement>()
@@ -824,7 +835,7 @@ function updateHorizontalMetrics() {
 
 // Navigation
 function goHome() {
-  router.push('/')
+  router.replace('/')
 }
 
 async function prevChapter() {
@@ -1624,6 +1635,7 @@ onMounted(async () => {
   checkMedia()
   window.addEventListener('resize', checkMedia)
   store.fetchVoices()
+  applySystemTheme(store.isNight ? 'dark' : appStore.theme, store.currentTheme.body)
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.onvoiceschanged = () => store.fetchVoices()
   }
@@ -1648,6 +1660,7 @@ onUnmounted(() => {
   if (typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.onvoiceschanged = null
   }
+  applySystemTheme(appStore.theme)
   store.closePanel()
 })
 
@@ -1751,16 +1764,28 @@ watch(() => store.isSpeaking, (speaking) => {
     clearReadingClass()
   }
 })
+
+watch(
+  [() => store.isNight, () => store.currentTheme.body, () => appStore.theme],
+  ([isNight, body]) => {
+    applySystemTheme(isNight ? 'dark' : appStore.theme, body)
+  },
+  { immediate: true },
+)
 </script>
 
 <style scoped>
 .reader-view {
   height: 100vh;
+  height: 100dvh;
   width: 100vw;
   display: flex;
   position: relative;
   overflow: hidden;
   transition: background 0.3s, color 0.3s;
+  padding-top: var(--safe-area-top);
+  padding-bottom: var(--safe-area-bottom);
+  box-sizing: border-box;
 }
 
 .reader-view.disable-system-callout .chapter-text,
@@ -1941,7 +1966,7 @@ watch(() => store.isSpeaking, (speaking) => {
 .horizontal-next-floating {
   position: absolute;
   left: 50%;
-  bottom: 20px;
+  bottom: calc(20px + var(--safe-area-bottom));
   transform: translateX(-50%);
   z-index: 12;
   pointer-events: none;
@@ -1994,8 +2019,8 @@ watch(() => store.isSpeaking, (speaking) => {
 
 .reader-drawer {
   position: fixed;
-  top: 0;
-  bottom: 0;
+  top: var(--safe-area-top);
+  bottom: var(--safe-area-bottom);
   left: 0;
   width: min(340px, 85vw);
   z-index: 50;
@@ -2005,7 +2030,7 @@ watch(() => store.isSpeaking, (speaking) => {
 
 .tts-controls {
   position: fixed;
-  bottom: 24px;
+  bottom: calc(24px + var(--safe-area-bottom));
   left: 50%;
   transform: translateX(-50%);
   padding: 12px 24px;
@@ -2081,7 +2106,7 @@ watch(() => store.isSpeaking, (speaking) => {
 
 .reader-search-bar {
   position: fixed;
-  top: 24px;
+  top: calc(24px + var(--safe-area-top));
   right: 80px;
   padding: 8px 16px;
   border-radius: 12px;

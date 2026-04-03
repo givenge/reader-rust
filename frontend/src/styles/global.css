@@ -15,6 +15,7 @@ html {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  background-color: var(--color-bg);
 }
 
 body {
@@ -26,6 +27,12 @@ body {
   transition: background-color var(--duration-slow) var(--ease-out),
               color var(--duration-slow) var(--ease-out);
   overflow-x: hidden;
+}
+
+html, body, #app {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background-color: var(--color-bg);
 }
 
 a {
