@@ -4,10 +4,39 @@
 
 Rust 版 `reader` 服务端，基于 axum + tokio + reqwest + sqlx(SQLite) + rquickjs。
 
+## 接口文档
+
+- 后端接口整理文档：[/Users/mac/project/reder/reader-rust/docs/backend-api.md](/Users/mac/project/reder/reader-rust/docs/backend-api.md)
+
 ## 运行环境
 
 - Rust 1.75+（建议使用最新稳定版）
 - SQLite
+
+## 前端说明
+
+项目当前包含两套前端：
+
+### 旧前端：`web/`
+
+- 原版Reader前端改UI
+- 基于 Vue 2
+- 属于较早版本的 Web 客户端
+- 默认构建产物目录为 `web/dist`
+- 后端默认通过 `WEB_ROOT=web/dist` 提供静态文件服务
+
+### 新前端：`frontend/`
+
+- 基于 Vue 3 + Vite + TypeScript
+- 是当前正在持续开发的新前端
+- 已完成阅读页、服务器备份、书架拖拽排序、PWA、构建体积优化等新能力
+- 适合后续功能迭代与界面改进
+
+### 当前使用建议
+
+- 如果要保持与当前后端默认配置一致，可继续使用旧前端 `web/`
+- 如果要体验和开发新界面，请使用新前端 `frontend/`
+- 如需让后端直接服务新前端构建结果，请将 `WEB_ROOT` 改为 `frontend/dist`
 
 ## 打包与运行
 

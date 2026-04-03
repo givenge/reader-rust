@@ -1,29 +1,21 @@
-use axum::{extract::{State, Query}, Json};
-use serde::Deserialize;
+use axum::{extract::State, Json};
 use serde_json::Value;
 use crate::api::AppState;
+use crate::api::auth::AuthContext;
 
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::bookmark::Bookmark;
 use tokio::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize)]
-pub struct AccessTokenQuery {
-    #[serde(rename = "accessToken")]
-    pub access_token: Option<String>,
-    #[serde(rename = "secureKey")]
-    pub secure_key: Option<String>,
-}
-
-pub async fn get_bookmarks(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn get_bookmarks(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(list).unwrap_or_default())))
 }
 
-pub async fn save_bookmark(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(bookmark): Json<Bookmark>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn save_bookmark(State(state): State<AppState>, auth: AuthContext, Json(bookmark): Json<Bookmark>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     if bookmark.book_name.is_empty() && bookmark.book_author.is_empty() {
         return Err(AppError::BadRequest("书籍信息错误".to_string()));
     }
@@ -33,8 +25,8 @@ pub async fn save_bookmark(State(state): State<AppState>, Query(q): Query<Access
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn save_bookmarks(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(mut bookmarks): Json<Vec<Bookmark>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn save_bookmarks(State(state): State<AppState>, auth: AuthContext, Json(mut bookmarks): Json<Vec<Bookmark>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
     bookmarks.retain(|b| !(b.book_name.is_empty() && b.book_author.is_empty()));
     for b in bookmarks {
@@ -44,16 +36,16 @@ pub async fn save_bookmarks(State(state): State<AppState>, Query(q): Query<Acces
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn delete_bookmark(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(bookmark): Json<Bookmark>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn delete_bookmark(State(state): State<AppState>, auth: AuthContext, Json(bookmark): Json<Bookmark>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
     list.retain(|b| !(b.book_name == bookmark.book_name && b.book_author == bookmark.book_author));
     write_list(&state, &user_ns, "bookmark.json", &list).await?;
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn delete_bookmarks(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(bookmarks): Json<Vec<Bookmark>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn delete_bookmarks(State(state): State<AppState>, auth: AuthContext, Json(bookmarks): Json<Vec<Bookmark>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let mut list = read_list::<Bookmark>(&state, &user_ns, "bookmark.json").await?;
     for b in bookmarks {
         list.retain(|v| !(v.book_name == b.book_name && v.book_author == b.book_author));
@@ -62,8 +54,8 @@ pub async fn delete_bookmarks(State(state): State<AppState>, Query(q): Query<Acc
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-async fn resolve_user_ns(state: &AppState, access_token: Option<&str>, secure_key: Option<&str>) -> Result<String, AppError> {
-    match state.user_service.resolve_user_ns(access_token, secure_key).await {
+async fn resolve_user_ns(state: &AppState, access_token: Option<&str>, secure_key: Option<&str>, user_ns: Option<&str>) -> Result<String, AppError> {
+    match state.user_service.resolve_user_ns_with_override(access_token, secure_key, user_ns).await {
         Ok(ns) => Ok(ns),
         Err(_) => Err(AppError::BadRequest("NEED_LOGIN".to_string())),
     }

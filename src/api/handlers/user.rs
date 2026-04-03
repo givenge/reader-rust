@@ -4,6 +4,7 @@ use serde_json::Value;
 use tokio::fs;
 use std::path::PathBuf;
 use crate::api::AppState;
+use crate::api::auth::AuthContext;
 
 use crate::error::error::{ApiResponse, AppError};
 
@@ -17,13 +18,7 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct AccessTokenQuery {
-    #[serde(rename = "accessToken")]
-    pub access_token: Option<String>,
-    #[serde(rename = "secureKey")]
-    pub secure_key: Option<String>,
-    #[serde(rename = "userNS")]
-    pub _user_ns: Option<String>,
+pub struct FileTypeQuery {
     #[serde(rename = "type")]
     pub file_type: Option<String>,
 }
@@ -54,7 +49,7 @@ pub struct DeleteFileRequest {
     pub url: Option<String>,
 }
 
-pub async fn login(State(state): State<AppState>, Query(_q): Query<AccessTokenQuery>, Json(req): Json<LoginRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
+pub async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
     let username = req.username.unwrap_or_default();
     let password = req.password.unwrap_or_default();
     let is_login = req.is_login.unwrap_or(false);
@@ -67,18 +62,18 @@ pub async fn login(State(state): State<AppState>, Query(_q): Query<AccessTokenQu
     Ok(Json(ApiResponse::ok(data)))
 }
 
-pub async fn logout(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
+pub async fn logout(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
     if !state.user_service.secure_enabled() {
         return Ok(Json(ApiResponse::err("不支持的操作")));
     }
-    if let Some(token) = q.access_token.as_deref() {
+    if let Some(token) = auth.access_token() {
         let _ = state.user_service.logout(token).await;
     }
     Ok(Json(ApiResponse::err_with_data("请重新登录", Value::String("NEED_LOGIN".to_string()))))
 }
 
-pub async fn get_user_info(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let (user_info, secure, secure_key) = state.user_service.get_user_info(q.access_token.as_deref()).await?;
+pub async fn get_user_info(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let (user_info, secure, secure_key) = state.user_service.get_user_info(auth.access_token()).await?;
     let data = serde_json::json!({
         "userInfo": user_info,
         "secure": secure,
@@ -87,8 +82,8 @@ pub async fn get_user_info(State(state): State<AppState>, Query(q): Query<Access
     Ok(Json(ApiResponse::ok(data)))
 }
 
-pub async fn save_user_config(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(body): Json<Value>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = match state.user_service.resolve_user_ns(q.access_token.as_deref(), q.secure_key.as_deref()).await {
+pub async fn save_user_config(State(state): State<AppState>, auth: AuthContext, Json(body): Json<Value>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = match state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await {
         Ok(ns) => ns,
         Err(_) => return Ok(Json(ApiResponse::err_with_data("请登录后使用", Value::String("NEED_LOGIN".to_string())))),
     };
@@ -96,8 +91,8 @@ pub async fn save_user_config(State(state): State<AppState>, Query(q): Query<Acc
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn get_user_config(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = match state.user_service.resolve_user_ns(q.access_token.as_deref(), q.secure_key.as_deref()).await {
+pub async fn get_user_config(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = match state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await {
         Ok(ns) => ns,
         Err(_) => return Ok(Json(ApiResponse::err_with_data("请登录后使用", Value::String("NEED_LOGIN".to_string())))),
     };
@@ -105,12 +100,12 @@ pub async fn get_user_config(State(state): State<AppState>, Query(q): Query<Acce
     Ok(Json(ApiResponse::ok(cfg)))
 }
 
-pub async fn get_user_list(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
+pub async fn get_user_list(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
     if !state.user_service.secure_enabled() {
         return Ok(Json(ApiResponse::err("不支持的操作")));
     }
     // Check if admin (either by is_admin flag or secure key)
-    let is_admin = state.user_service.is_admin(q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+    let is_admin = state.user_service.is_admin(auth.access_token(), auth.secure_key()).await?;
     if !is_admin {
         return Ok(Json(ApiResponse::err_with_data("请输入管理密码", Value::String("NEED_SECURE_KEY".to_string()))));
     }
@@ -118,12 +113,12 @@ pub async fn get_user_list(State(state): State<AppState>, Query(q): Query<Access
     Ok(Json(ApiResponse::ok(Value::from(list))))
 }
 
-pub async fn add_user(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(req): Json<AddUserRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
+pub async fn add_user(State(state): State<AppState>, auth: AuthContext, Json(req): Json<AddUserRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
     if !state.user_service.secure_enabled() {
         return Ok(Json(ApiResponse::err("不支持的操作")));
     }
     // Check if admin (either by is_admin flag or secure key)
-    let is_admin = state.user_service.is_admin(q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+    let is_admin = state.user_service.is_admin(auth.access_token(), auth.secure_key()).await?;
     if !is_admin {
         return Ok(Json(ApiResponse::err_with_data("请输入管理密码", Value::String("NEED_SECURE_KEY".to_string()))));
     }
@@ -133,12 +128,12 @@ pub async fn add_user(State(state): State<AppState>, Query(q): Query<AccessToken
     Ok(Json(ApiResponse::ok(Value::from(list))))
 }
 
-pub async fn reset_password(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(req): Json<ResetPasswordRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
+pub async fn reset_password(State(state): State<AppState>, auth: AuthContext, Json(req): Json<ResetPasswordRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
     if !state.user_service.secure_enabled() {
         return Ok(Json(ApiResponse::err("不支持的操作")));
     }
     // Check if admin (either by is_admin flag or secure key)
-    let is_admin = state.user_service.is_admin(q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+    let is_admin = state.user_service.is_admin(auth.access_token(), auth.secure_key()).await?;
     if !is_admin {
         return Ok(Json(ApiResponse::err_with_data("请输入管理密码", Value::String("NEED_SECURE_KEY".to_string()))));
     }
@@ -148,12 +143,12 @@ pub async fn reset_password(State(state): State<AppState>, Query(q): Query<Acces
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn delete_users(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(list): Json<Vec<String>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+pub async fn delete_users(State(state): State<AppState>, auth: AuthContext, Json(list): Json<Vec<String>>) -> Result<Json<ApiResponse<Value>>, AppError> {
     if !state.user_service.secure_enabled() {
         return Ok(Json(ApiResponse::err("不支持的操作")));
     }
     // Check if admin (either by is_admin flag or secure key)
-    let is_admin = state.user_service.is_admin(q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+    let is_admin = state.user_service.is_admin(auth.access_token(), auth.secure_key()).await?;
     if !is_admin {
         return Ok(Json(ApiResponse::err_with_data("请输入管理密码", Value::String("NEED_SECURE_KEY".to_string()))));
     }
@@ -161,12 +156,12 @@ pub async fn delete_users(State(state): State<AppState>, Query(q): Query<AccessT
     Ok(Json(ApiResponse::ok(Value::from(users))))
 }
 
-pub async fn update_user(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(req): Json<UpdateUserRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
+pub async fn update_user(State(state): State<AppState>, auth: AuthContext, Json(req): Json<UpdateUserRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
     if !state.user_service.secure_enabled() {
         return Ok(Json(ApiResponse::err("不支持的操作")));
     }
     // Check if admin (either by is_admin flag or secure key)
-    let is_admin = state.user_service.is_admin(q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+    let is_admin = state.user_service.is_admin(auth.access_token(), auth.secure_key()).await?;
     if !is_admin {
         return Ok(Json(ApiResponse::err_with_data("请输入管理密码", Value::String("NEED_SECURE_KEY".to_string()))));
     }
@@ -175,8 +170,8 @@ pub async fn update_user(State(state): State<AppState>, Query(q): Query<AccessTo
     Ok(Json(ApiResponse::ok(Value::from(list))))
 }
 
-pub async fn upload_file(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, mut multipart: Multipart) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = match state.user_service.resolve_user_ns(q.access_token.as_deref(), q.secure_key.as_deref()).await {
+pub async fn upload_file(State(state): State<AppState>, auth: AuthContext, Query(q): Query<FileTypeQuery>, mut multipart: Multipart) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = match state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await {
         Ok(ns) => ns,
         Err(_) => return Ok(Json(ApiResponse::err_with_data("请登录后使用", Value::String("NEED_LOGIN".to_string())))),
     };
@@ -200,8 +195,8 @@ pub async fn upload_file(State(state): State<AppState>, Query(q): Query<AccessTo
     Ok(Json(ApiResponse::ok(Value::from(file_list))))
 }
 
-pub async fn delete_file(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(req): Json<DeleteFileRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = match state.user_service.resolve_user_ns(q.access_token.as_deref(), q.secure_key.as_deref()).await {
+pub async fn delete_file(State(state): State<AppState>, auth: AuthContext, Json(req): Json<DeleteFileRequest>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = match state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await {
         Ok(ns) => ns,
         Err(_) => return Ok(Json(ApiResponse::err_with_data("请登录后使用", Value::String("NEED_LOGIN".to_string())))),
     };

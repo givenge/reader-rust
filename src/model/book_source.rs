@@ -15,6 +15,7 @@ pub struct BookSource {
     pub custom_order: Option<i32>,
     pub enabled: Option<bool>,
     pub enabled_explore: Option<bool>,
+    pub enabled_cookie_jar: Option<bool>,
     pub header: Option<String>,
     pub login_url: Option<String>,
     pub login_check_js: Option<String>,
@@ -29,4 +30,6 @@ pub struct BookSource {
     pub rule_content: Option<ContentRule>,
     pub book_source_comment: Option<String>,
     pub respond_time: Option<i64>,
+    pub load_with_base_url: Option<bool>,
+    pub single_url: Option<bool>,
 }

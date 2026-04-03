@@ -1017,11 +1017,13 @@ import { errorTypeList } from "../plugins/config";
 import { setCache, getCache } from "../plugins/cache";
 import eventBus from "../plugins/eventBus";
 import { formatSize, LimitResquest } from "../plugins/helper";
-const buildURL = require("axios/lib/helpers/buildURL");
 import { isInContainer } from "element-ui/src/utils/dom";
 import Vue from "vue";
+import indexSearchMixin from "../features/index/runtime/indexSearch";
+import indexShelfMixin from "../features/index/runtime/indexShelf";
 
 export default {
+  mixins: [indexSearchMixin, indexShelfMixin],
   components: {
     Explore,
     LocalStore,
@@ -1029,23 +1031,9 @@ export default {
   },
   data() {
     return {
-      search: "",
-      searchTypeList: [
-        { name: "单源搜索", value: "single" },
-        { name: "多源搜索(过滤书名/作者名)", value: "multi" }
-      ],
-      isSearchResult: false,
-      isExploreResult: false,
-      searchResult: [],
-      searchPage: 1,
-      refreshLoading: false,
-      searchLastIndex: -1,
-
       showBookEditButton: false,
 
       popExploreVisible: false,
-      loadingMore: false,
-
       importSourceList: [],
       showImportSourceDialog: false,
       isImportRssSource: false,
@@ -1065,8 +1053,6 @@ export default {
       navigationStyle: {},
 
       popIntroVisible: {},
-
-      connecting: false,
 
       lastScrollTop: 0,
 
@@ -1202,272 +1188,6 @@ export default {
     this.scanCacheStorage();
   },
   methods: {
-    init(refresh) {
-      this.$root.$children[0].init(refresh);
-    },
-    setIP() {
-      this.$prompt("请输入接口地址 ( 如：localhost:8080/reader3 )", "提示", {
-        confirmButtonText: "确定",
-        cancelButtonText: "取消",
-        inputValue: this.api,
-        // inputPattern: /^((2[0-4]\d|25[0-5]|[1]?\d\d?)\.){3}(2[0-4]\d|25[0-5]|[1]?\d\d?):([1-9]|[1-9][0-9]|[1-9][0-9][0-9]|[1-9][0-9][0-9][0-9]|[1-6][0-5][0-5][0-3][0-5])$/,
-        // inputErrorMessage: "url 形式不正确",
-        beforeClose: (action, instance, done) => {
-          if (action === "confirm") {
-            this.connecting = true;
-            instance.confirmButtonLoading = true;
-            instance.confirmButtonText = "校验中……";
-            var inputUrl = instance.inputValue.replace(/\/*$/g, "");
-            this.loadBookshelf(inputUrl)
-              .then(() => {
-                this.connecting = false;
-                instance.confirmButtonLoading = false;
-                done();
-                setCache("api_prefix", inputUrl);
-                this.$store.commit("setApi", inputUrl);
-                // 初始化
-                this.init();
-              })
-              .catch(() => {
-                instance.confirmButtonLoading = false;
-                instance.confirmButtonText = "确定";
-              });
-          } else {
-            done();
-          }
-        }
-      })
-        .then(({ value }) => {
-          this.$message({
-            type: "success",
-            message: "与" + value + "连接成功"
-          });
-        })
-        .catch(() => {});
-    },
-    loadBookshelf(api, refresh) {
-      api = api || this.api;
-      if (!api) {
-        this.$message.error("请先设置后端接口地址");
-        this.$store.commit("setConnected", false);
-        return Promise.reject(false);
-      }
-
-      if (!this.loading || !this.loading.visible) {
-        this.loading = this.$loading({
-          target: this.$refs.bookList,
-          lock: true,
-          text: refresh ? "正在刷新书籍信息" : "正在获取书籍信息",
-          spinner: "el-icon-loading",
-          background: this.isNight ? "#222" : "#fff"
-        });
-      }
-
-      if (
-        !api.startsWith("http://") &&
-        !api.startsWith("https://") &&
-        !api.startsWith("//")
-      ) {
-        api = "//" + api;
-      }
-
-      return this.$root.$children[0].loadBookShelf(refresh, api).then(() => {
-        this.loading.close();
-      });
-    },
-    refreshShelf() {
-      return this.loadBookshelf(null, true);
-    },
-    loadBookGroup(refresh) {
-      return this.$root.$children[0].loadBookGroup(refresh);
-    },
-    loadBookSource(refresh) {
-      return this.$root.$children[0].loadBookSource(refresh);
-    },
-    searchBook(page) {
-      if (!this.$store.state.connected) {
-        this.$message.error("后端未连接");
-        return;
-      }
-      if (!this.search) {
-        this.$message.error("请输入关键词进行搜索");
-        return;
-      }
-      if (
-        this.searchConfig.searchType === "single" &&
-        !this.searchConfig.bookSourceUrl
-      ) {
-        this.$message.error("请选择书源进行搜索");
-        return;
-      }
-      if (page) {
-        this.searchPage = page;
-      }
-      page = this.searchPage;
-      if (page === 1) {
-        // 重新搜索
-        this.searchLastIndex = -1;
-      }
-      if (this.searchConfig.searchType === "multi" && window.EventSource) {
-        this.searchBookByEventStream(page);
-        return;
-      }
-      if (this.loadingMore) {
-        return;
-      }
-      this.isSearchResult = true;
-      this.isExploreResult = false;
-      this.loadingMore = true;
-      if (page === 1) {
-        this.searchResult = [];
-      }
-      const isSingleSearch = this.searchConfig.searchType === "single";
-      Axios.post(
-        this.api +
-          (isSingleSearch
-            ? "/searchBook"
-            : "/searchBookMulti"),
-        {
-          key: this.search,
-          bookSourceUrl: isSingleSearch ? this.searchConfig.bookSourceUrl : undefined,
-          bookSourceGroup: this.searchConfig.bookSourceGroup,
-          concurrentCount: this.searchConfig.concurrentCount,
-          lastIndex: this.searchLastIndex, // 多源搜索时的索引
-          page: page // 单源搜索时的page
-        },
-        {
-          timeout: isSingleSearch ? 30000 : 180000
-        }
-      ).then(
-        res => {
-          this.loadingMore = false;
-          if (res.data.isSuccess) {
-            //
-            let resultList = [];
-            if (this.searchConfig.searchType === "single") {
-              resultList = res.data.data;
-            } else {
-              this.searchLastIndex = res.data.data.lastIndex;
-              resultList = res.data.data.list;
-            }
-            var data = [].concat(this.searchResult);
-            var length = data.length;
-            resultList.forEach(v => {
-              if (!this.searchResultMap[v.bookUrl]) {
-                data.push(v);
-              }
-            });
-            this.searchResult = data;
-            if (data.length === length) {
-              this.$message.error("没有更多啦");
-            }
-          }
-        },
-        error => {
-          this.$message.error("搜索书籍失败 " + (error && error.toString()));
-        }
-      );
-    },
-    searchBookByEventStream(page) {
-      const tryClose = () => {
-        try {
-          if (
-            this.searchEventSource &&
-            this.searchEventSource.readyState != this.searchEventSource.CLOSED
-          ) {
-            this.searchEventSource.close();
-          }
-          this.searchEventSource = null;
-        } catch (error) {
-          //
-        }
-      };
-      if (this.loadingMore) {
-        tryClose();
-        this.loadingMore = false;
-        // page === 1 是重新搜索
-        if (page !== 1) {
-          // 停止搜索
-          return;
-        }
-      }
-      const params = {
-        accessToken: this.$store.state.token,
-        key: this.search,
-        // 多源搜索不传bookSourceUrl，否则只会用单个书源
-        bookSourceGroup: this.searchConfig.bookSourceGroup,
-        concurrentCount: this.searchConfig.concurrentCount,
-        lastIndex: this.searchLastIndex, // 多源搜索时的索引
-        page: page // 单源搜索时的page
-      };
-
-      this.isSearchResult = true;
-      this.isExploreResult = false;
-      this.loadingMore = true;
-      if (page === 1) {
-        this.searchResult = [];
-      }
-      const url = buildURL(this.api + "/searchBookMultiSSE", params);
-
-      tryClose();
-
-      this.searchEventSource = new EventSource(url, {
-        withCredentials: true
-      });
-      this.searchEventSource.addEventListener("error", e => {
-        this.loadingMore = false;
-        tryClose();
-        try {
-          if (e.data) {
-            const result = JSON.parse(e.data);
-            if (result && result.errorMsg) {
-              this.$message.error(result.errorMsg);
-            }
-          }
-        } catch (error) {
-          //
-        }
-      });
-      let oldSearchResultLength = this.searchResult.length;
-      this.searchEventSource.addEventListener("end", e => {
-        this.loadingMore = false;
-        tryClose();
-        try {
-          if (e.data) {
-            const result = JSON.parse(e.data);
-            if (result && result.lastIndex) {
-              this.searchLastIndex = result.lastIndex;
-            }
-          }
-          if (this.searchResult.length === oldSearchResultLength) {
-            this.$message.error("没有更多啦");
-          }
-        } catch (error) {
-          //
-        }
-      });
-      this.searchEventSource.addEventListener("message", e => {
-        try {
-          if (e.data) {
-            const result = JSON.parse(e.data);
-            if (result && result.lastIndex) {
-              this.searchLastIndex = result.lastIndex;
-            }
-            if (result.data) {
-              var data = [].concat(this.searchResult);
-              result.data.forEach(v => {
-                if (!this.searchResultMap[v.bookUrl]) {
-                  data.push(v);
-                }
-              });
-              this.searchResult = data;
-            }
-          }
-        } catch (error) {
-          //
-        }
-      });
-    },
     toDetail(book) {
       if (!book.bookUrl) {
         return;

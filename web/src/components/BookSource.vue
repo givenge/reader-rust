@@ -65,6 +65,7 @@
 <script>
 import jump from "../plugins/jump";
 import Axios from "../plugins/axios";
+import { HeaderEventSource } from "../plugins/sse";
 const buildURL = require("axios/lib/helpers/buildURL");
 
 export default {
@@ -251,7 +252,6 @@ export default {
         return;
       }
       const params = {
-        accessToken: this.$store.state.token,
         concurrentCount: this.$store.state.searchConfig.concurrentCount,
         url: this.$store.getters.readingBook.bookUrl,
         bookSourceGroup: this.bookSourceGroup,
@@ -263,7 +263,7 @@ export default {
 
       tryClose();
 
-      this.searchEventSource = new EventSource(url, {
+      this.searchEventSource = new HeaderEventSource(url, {
         withCredentials: true
       });
       this.searchEventSource.addEventListener("error", e => {

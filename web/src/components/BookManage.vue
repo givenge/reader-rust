@@ -166,6 +166,7 @@
 <script>
 import { mapGetters } from "vuex";
 import Axios from "../plugins/axios";
+import { HeaderEventSource } from "../plugins/sse";
 import eventBus from "../plugins/eventBus";
 const buildURL = require("axios/lib/helpers/buildURL");
 import { LimitResquest } from "../plugins/helper";
@@ -395,7 +396,7 @@ export default {
       tryClose();
 
       this.cachingBookList = this.cachingBookList.concat([book]);
-      window.cacheEventSource[book.bookUrl] = new EventSource(url, {
+      window.cacheEventSource[book.bookUrl] = new HeaderEventSource(url, {
         withCredentials: true
       });
       window.cacheEventSource[book.bookUrl].addEventListener("error", e => {

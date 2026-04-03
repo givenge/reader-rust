@@ -1,0 +1,546 @@
+<template>
+  <div class="read-settings" :style="{ background: theme.popup, color: theme.fontColor }">
+    <div class="settings-header">
+      <h3 class="settings-title">设置</h3>
+      <button class="reset-btn" @click="store.resetConfig()">重置为默认配置</button>
+    </div>
+    <div class="settings-sep"></div>
+
+    <div class="settings-body">
+      <!-- 阅读主题 -->
+      <div class="setting-row">
+        <label>阅读主题</label>
+        <div class="theme-swatches">
+          <button
+            v-for="(t, i) in themePresets"
+            :key="i"
+            class="swatch"
+            :class="{ active: store.themeIndex === i && !store.isNight }"
+            :style="{ background: t.body }"
+            @click="store.setThemeIndex(i)"
+          >
+            <svg v-if="store.themeIndex === i && !store.isNight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5" /></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 正文字体 -->
+      <div class="setting-row">
+        <label>正文字体</label>
+        <div class="btn-group">
+          <button
+            v-for="f in fontPresets"
+            :key="f.value"
+            class="opt-btn"
+            :class="{ active: config.fontFamily === f.value }"
+            @click="store.updateConfig('fontFamily', f.value)"
+          >{{ f.label }}</button>
+        </div>
+      </div>
+
+      <!-- 简繁转换 -->
+      <div class="setting-row">
+        <label>简繁转换</label>
+        <div class="btn-group">
+          <button class="opt-btn" :class="{ active: config.chineseMode === 'simplified' }" @click="store.updateConfig('chineseMode', 'simplified')">简体</button>
+          <button class="opt-btn" :class="{ active: config.chineseMode === 'traditional' }" @click="store.updateConfig('chineseMode', 'traditional')">繁体</button>
+        </div>
+      </div>
+
+      <div class="settings-sep"></div>
+
+      <!-- 字体大小 -->
+      <div class="setting-row">
+        <label>字体大小</label>
+        <div class="stepper">
+          <button class="step-btn" @click="step('fontSize', -1, 12, 32)">A-</button>
+          <span class="step-val">{{ config.fontSize }}</span>
+          <button class="step-btn" @click="step('fontSize', 1, 12, 32)">A+</button>
+        </div>
+      </div>
+
+      <!-- 字体粗细 -->
+      <div class="setting-row">
+        <label>字体粗细</label>
+        <div class="stepper">
+          <button class="step-btn" @click="step('fontWeight', -100, 100, 900)">—</button>
+          <span class="step-val">{{ config.fontWeight }}</span>
+          <button class="step-btn" @click="step('fontWeight', 100, 100, 900)">+</button>
+        </div>
+      </div>
+
+      <!-- 段落行高 -->
+      <div class="setting-row">
+        <label>段落行高</label>
+        <div class="stepper">
+          <button class="step-btn" @click="stepFloat('lineHeight', -0.1, 1.0, 3.0)">—</button>
+          <span class="step-val">{{ config.lineHeight.toFixed(1) }}</span>
+          <button class="step-btn" @click="stepFloat('lineHeight', 0.1, 1.0, 3.0)">+</button>
+        </div>
+      </div>
+
+      <!-- 段落间距 -->
+      <div class="setting-row">
+        <label>段落间距</label>
+        <div class="stepper">
+          <button class="step-btn" @click="stepFloat('paragraphSpacing', -0.1, 0, 2.0)">—</button>
+          <span class="step-val">{{ config.paragraphSpacing.toFixed(1) }}</span>
+          <button class="step-btn" @click="stepFloat('paragraphSpacing', 0.1, 0, 2.0)">+</button>
+        </div>
+      </div>
+
+      <!-- 页面模式 -->
+      <div class="setting-row">
+        <label>页面模式</label>
+        <div class="btn-group">
+          <button class="opt-btn" :class="{ active: config.pageMode === 'auto' }" @click="store.updateConfig('pageMode', 'auto')">自适应</button>
+          <button class="opt-btn" :class="{ active: config.pageMode === 'mobile' }" @click="store.updateConfig('pageMode', 'mobile')">手机模式</button>
+        </div>
+      </div>
+
+      <!-- 页面宽度 -->
+      <div class="setting-row">
+        <label>页面宽度</label>
+        <div class="stepper">
+          <button class="step-btn" @click="step('pageWidth', -50, 400, 1200)">目-</button>
+          <span class="step-val">{{ config.pageWidth }}</span>
+          <button class="step-btn" @click="step('pageWidth', 50, 400, 1200)">目+</button>
+        </div>
+      </div>
+
+      <div class="settings-sep"></div>
+
+      <!-- 翻页方式 -->
+      <div class="setting-row">
+        <label>翻页方式</label>
+        <div class="btn-group">
+          <button class="opt-btn" :class="{ active: config.readMethod === '上下滑动' }" @click="store.updateConfig('readMethod', '上下滑动')">上下滑动</button>
+          <button class="opt-btn" :class="{ active: config.readMethod === '左右翻页' }" @click="store.updateConfig('readMethod', '左右翻页')">左右翻页</button>
+          <button class="opt-btn" :class="{ active: config.readMethod === '上下滚动' }" @click="store.updateConfig('readMethod', '上下滚动')">上下滚动</button>
+          <button class="opt-btn" :class="{ active: config.readMethod === '上下滚动2' }" @click="store.updateConfig('readMethod', '上下滚动2')">上下滚动2</button>
+        </div>
+      </div>
+
+      <!-- 动画时长 -->
+      <div class="setting-row">
+        <label>动画时长</label>
+        <div class="stepper">
+          <button class="step-btn" @click="step('animateDuration', -50, 0, 1000)">—</button>
+          <span class="step-val">{{ config.animateDuration }}</span>
+          <button class="step-btn" @click="step('animateDuration', 50, 0, 1000)">+</button>
+        </div>
+      </div>
+
+      <!-- 自动阅读 -->
+      <div class="setting-row">
+        <label>自动阅读</label>
+        <button 
+          class="opt-btn wide" 
+          :class="{ active: store.isAutoScrolling }"
+          @click="store.isAutoScrolling = !store.isAutoScrolling"
+        >
+          {{ store.isAutoScrolling ? '停止滚动' : '开启自动平滑滚动' }}
+        </button>
+      </div>
+
+      <!-- 自动翻页模式 -->
+      <div class="setting-row">
+        <label>滚动方式</label>
+        <div class="btn-group">
+          <button class="opt-btn" :class="{ active: config.autoPageMode === 'pixel' }" @click="store.updateConfig('autoPageMode', 'pixel')">像素滚动</button>
+          <button class="opt-btn" :class="{ active: config.autoPageMode === 'paragraph' }" @click="store.updateConfig('autoPageMode', 'paragraph')">段落滚动</button>
+        </div>
+      </div>
+
+      <!-- 滚动像素 -->
+      <div class="setting-row">
+        <label>滚动像素</label>
+        <div class="stepper">
+          <button class="step-btn" @click="step('scrollPixel', -1, 1, 10)">—</button>
+          <span class="step-val">{{ config.scrollPixel }}</span>
+          <button class="step-btn" @click="step('scrollPixel', 1, 1, 10)">+</button>
+        </div>
+      </div>
+
+      <!-- 滚动速度 -->
+      <div class="setting-row">
+        <label>垂直速度</label>
+        <div class="stepper">
+          <button class="step-btn" @click="step('pageSpeed', -100, 100, 5000)">—</button>
+          <span class="step-val">{{ config.pageSpeed }}</span>
+          <button class="step-btn" @click="step('pageSpeed', 100, 100, 5000)">+</button>
+        </div>
+      </div>
+
+      <!-- 点击翻页 (全屏热区) -->
+      <div class="setting-row">
+        <label>点击翻页</label>
+        <div class="btn-group">
+          <button class="opt-btn" :class="{ active: config.clickAction === 'auto' }" @click="store.updateConfig('clickAction', 'auto')">自动翻页</button>
+          <button class="opt-btn" :class="{ active: config.clickAction === 'next' }" @click="store.updateConfig('clickAction', 'next')">仅下滚</button>
+          <button class="opt-btn" :class="{ active: config.clickAction === 'none' }" @click="store.updateConfig('clickAction', 'none')">禁用</button>
+        </div>
+      </div>
+
+      <!-- 选择文字 -->
+      <div class="setting-row">
+        <label>选择文字</label>
+        <div class="btn-group">
+          <button class="opt-btn" :class="{ active: config.selectAction === 'popup' }" @click="store.updateConfig('selectAction', 'popup')">操作弹窗</button>
+          <button class="opt-btn" :class="{ active: config.selectAction === 'ignore' }" @click="store.updateConfig('selectAction', 'ignore')">忽略</button>
+        </div>
+      </div>
+
+      <div class="settings-sep"></div>
+
+      <!-- 朗读音源 -->
+      <div class="setting-row setting-row-top">
+        <label>朗读音源</label>
+        <select class="voice-select" :value="store.speechConfig.voiceName" @change="handleVoiceChange">
+          <option value="">系统默认</option>
+          <option v-for="voice in store.voiceList" :key="voice.name" :value="voice.name">
+            {{ voice.name }} ({{ voice.lang }})
+          </option>
+        </select>
+      </div>
+
+      <div class="setting-row">
+        <label>朗读语速</label>
+        <div class="stepper">
+          <button class="step-btn" @click="adjustSpeechRate(-0.1)">—</button>
+          <span class="step-val">{{ store.speechConfig.speechRate.toFixed(1) }}</span>
+          <button class="step-btn" @click="adjustSpeechRate(0.1)">+</button>
+        </div>
+      </div>
+
+      <div class="setting-row">
+        <label>朗读音调</label>
+        <div class="stepper">
+          <button class="step-btn" @click="adjustSpeechPitch(-0.1)">—</button>
+          <span class="step-val">{{ store.speechConfig.speechPitch.toFixed(1) }}</span>
+          <button class="step-btn" @click="adjustSpeechPitch(0.1)">+</button>
+        </div>
+      </div>
+
+      <div class="setting-row setting-row-top">
+        <label>定时停止</label>
+        <div class="btn-group">
+          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 0 }" @click="store.setSpeechStopTimer(0)">关闭</button>
+          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 15 }" @click="store.setSpeechStopTimer(15)">15分钟</button>
+          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 30 }" @click="store.setSpeechStopTimer(30)">30分钟</button>
+          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 60 }" @click="store.setSpeechStopTimer(60)">60分钟</button>
+          <button class="opt-btn" :class="{ active: store.speechConfig.stopAfterMinutes === 120 }" @click="store.setSpeechStopTimer(120)">120分钟</button>
+        </div>
+      </div>
+
+      <div class="settings-sep"></div>
+
+      <!-- 更多操作 -->
+      <div class="setting-row">
+        <label>离线缓存</label>
+        <button class="opt-btn wide" @click="store.togglePanel('cache')">批量缓存章节</button>
+      </div>
+
+      <div class="setting-row">
+        <label>内容净化</label>
+        <button class="opt-btn wide" @click="store.togglePanel('rule')">管理净化规则</button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, onMounted } from 'vue'
+import { useReaderStore, themePresets, fontPresets } from '../../stores/reader'
+
+const store = useReaderStore()
+const config = computed(() => store.config)
+const theme = computed(() => store.currentTheme)
+
+function step(key: 'fontSize' | 'fontWeight' | 'pageWidth' | 'animateDuration' | 'scrollPixel' | 'pageSpeed', delta: number, min: number, max: number) {
+  const val = Math.max(min, Math.min(max, (config.value[key] as number) + delta))
+  store.updateConfig(key, val)
+}
+
+function stepFloat(key: 'lineHeight' | 'paragraphSpacing', delta: number, min: number, max: number) {
+  const val = Math.max(min, Math.min(max, parseFloat(((config.value[key] as number) + delta).toFixed(1))))
+  store.updateConfig(key, val)
+}
+
+function adjustSpeechRate(delta: number) {
+  const val = Math.max(0.5, Math.min(3, parseFloat((store.speechConfig.speechRate + delta).toFixed(1))))
+  store.setSpeechRate(val)
+}
+
+function adjustSpeechPitch(delta: number) {
+  const val = Math.max(0.5, Math.min(2, parseFloat((store.speechConfig.speechPitch + delta).toFixed(1))))
+  store.setSpeechPitch(val)
+}
+
+function handleVoiceChange(event: Event) {
+  const target = event.target as HTMLSelectElement | null
+  store.setVoiceName(target?.value || '')
+}
+
+onMounted(() => {
+  store.fetchVoices()
+})
+</script>
+
+<style scoped>
+.read-settings {
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  padding: 24px;
+  transition: background 0.3s, color 0.3s;
+  -webkit-overflow-scrolling: touch;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.settings-title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.settings-sep {
+  height: 1px;
+  background: currentColor;
+  opacity: 0.08;
+  margin: 16px 0;
+  width: 60px;
+}
+
+.settings-sep:first-of-type {
+  background: var(--color-primary, #c97f3a);
+  opacity: 1;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.reset-btn {
+  padding: 6px 16px;
+  border-radius: 20px;
+  border: 1px solid var(--color-primary, #c97f3a);
+  color: var(--color-primary, #c97f3a);
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s;
+  background: transparent;
+}
+
+.reset-btn:hover {
+  background: var(--color-primary, #c97f3a);
+  color: white;
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.setting-row-top {
+  align-items: flex-start;
+}
+
+.setting-row label {
+  min-width: 70px;
+  font-size: 14px;
+  font-weight: 500;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.voice-select {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.6);
+  color: inherit;
+}
+
+/* Theme swatches */
+.theme-swatches {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+
+.swatch:hover {
+  transform: scale(1.1);
+}
+
+.swatch.active {
+  border-color: var(--color-primary, #c97f3a);
+}
+
+.swatch svg {
+  width: 16px;
+  height: 16px;
+  color: var(--color-primary, #c97f3a);
+}
+
+/* Button groups */
+.btn-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.opt-btn {
+  padding: 6px 16px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid rgba(0,0,0,0.12);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.opt-btn:hover {
+  border-color: var(--color-primary, #c97f3a);
+}
+
+.opt-btn.active {
+  background: var(--color-primary, #c97f3a);
+  color: white;
+  border-color: var(--color-primary, #c97f3a);
+}
+
+/* Steppers */
+.stepper {
+  display: flex;
+  align-items: center;
+  border-radius: 20px;
+  border: 1px solid rgba(0,0,0,0.12);
+  overflow: hidden;
+}
+
+.step-btn {
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: none;
+  min-width: 40px;
+}
+
+.step-btn:hover {
+  background: rgba(0,0,0,0.06);
+}
+
+.step-btn:active {
+  background: rgba(0,0,0,0.1);
+}
+
+.step-val {
+  min-width: 50px;
+  text-align: center;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  border-left: 1px solid rgba(0,0,0,0.08);
+  border-right: 1px solid rgba(0,0,0,0.08);
+  padding: 6px 0;
+}
+
+@media (max-width: 420px) {
+  .read-settings {
+    padding: 16px;
+  }
+
+  .settings-header {
+    align-items: center;
+    gap: 8px;
+  }
+
+  .settings-title {
+    font-size: 18px;
+  }
+
+  .reset-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .setting-row {
+    align-items: center;
+    gap: 12px;
+  }
+
+  .setting-row label {
+    min-width: 60px;
+    font-size: 13px;
+  }
+
+  .btn-group {
+    gap: 6px;
+    flex: 0 1 auto;
+  }
+
+  .stepper,
+  .voice-select,
+  .theme-swatches {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .stepper {
+    width: auto;
+    display: inline-flex;
+  }
+
+  .opt-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+
+  .step-btn {
+    min-width: 36px;
+    padding: 6px 10px;
+  }
+
+  .step-val {
+    min-width: 42px;
+    font-size: 13px;
+  }
+
+  .voice-select {
+    width: auto;
+  }
+}
+</style>

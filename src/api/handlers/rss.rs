@@ -1,7 +1,9 @@
-use axum::{extract::{State, Query}, Json};
+use axum::{extract::State, Json};
+use axum::extract::Multipart;
 use serde::Deserialize;
 use serde_json::Value;
 use crate::api::AppState;
+use crate::api::auth::AuthContext;
 
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::rss::{RssSource, RssArticle};
@@ -10,11 +12,8 @@ use tokio::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
-pub struct AccessTokenQuery {
-    #[serde(rename = "accessToken")]
-    pub access_token: Option<String>,
-    #[serde(rename = "secureKey")]
-    pub secure_key: Option<String>,
+pub struct RemoteRssSourceParam {
+    url: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -36,14 +35,14 @@ pub struct RssContentRequest {
     pub origin: Option<String>,
 }
 
-pub async fn get_rss_sources(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn get_rss_sources(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(list).unwrap_or_default())))
 }
 
-pub async fn save_rss_source(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(source): Json<RssSource>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn save_rss_source(State(state): State<AppState>, auth: AuthContext, Json(source): Json<RssSource>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     if source.source_url.is_empty() {
         return Err(AppError::BadRequest("RSS链接不能为空".to_string()));
     }
@@ -56,8 +55,8 @@ pub async fn save_rss_source(State(state): State<AppState>, Query(q): Query<Acce
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn save_rss_sources(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(mut sources): Json<Vec<RssSource>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn save_rss_sources(State(state): State<AppState>, auth: AuthContext, Json(mut sources): Json<Vec<RssSource>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let mut list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
     sources.retain(|s| !s.source_url.is_empty() && !s.source_name.is_empty());
     for s in sources {
@@ -67,16 +66,70 @@ pub async fn save_rss_sources(State(state): State<AppState>, Query(q): Query<Acc
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn delete_rss_source(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, Json(source): Json<RssSource>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn delete_rss_source(State(state): State<AppState>, auth: AuthContext, Json(source): Json<RssSource>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let mut list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
     list.retain(|s| s.source_url != source.source_url);
     write_list(&state, &user_ns, "rssSources.json", &list).await?;
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
-pub async fn get_rss_articles(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, body: Option<Json<RssArticlesRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn read_remote_rss_source_file(
+    Json(param): Json<RemoteRssSourceParam>,
+) -> Result<Json<ApiResponse<Vec<String>>>, AppError> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .danger_accept_invalid_certs(true)
+        .build()
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let text = client.get(&param.url)
+        .send().await
+        .map_err(|e| AppError::BadRequest(format!("网络请求失败: {}", e)))?
+        .text().await
+        .map_err(|e| AppError::BadRequest(format!("读取响应失败: {}", e)))?;
+
+    let sources: Vec<RssSource> = serde_json::from_str(&text)
+        .or_else(|_| {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                extract_rss_sources(v)
+            } else {
+                Err(AppError::BadRequest("invalid rss sources json format".to_string()))
+            }
+        })?;
+
+    let json_str = serde_json::to_string(&sources)
+        .map_err(|e| AppError::BadRequest(format!("序列化RSS源失败: {}", e)))?;
+
+    Ok(Json(ApiResponse::ok(vec![json_str])))
+}
+
+pub async fn read_rss_source_file(
+    mut multipart: Multipart,
+) -> Result<Json<serde_json::Value>, AppError> {
+    while let Some(field) = multipart.next_field().await.map_err(|e| AppError::BadRequest(e.to_string()))? {
+        if let Some(file_name) = field.file_name() {
+            if file_name.ends_with(".json") || file_name.ends_with(".txt") {
+                let bytes = field.bytes().await.map_err(|e| AppError::BadRequest(e.to_string()))?;
+                let text = String::from_utf8_lossy(&bytes);
+                let sources: Vec<RssSource> = serde_json::from_str(&text)
+                    .or_else(|_| {
+                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                            extract_rss_sources(v)
+                        } else {
+                            Err(AppError::BadRequest("invalid rss sources json format".to_string()))
+                        }
+                    })?;
+                return Ok(Json(serde_json::to_value(sources).unwrap_or_default()));
+            }
+        }
+    }
+    Err(AppError::BadRequest("No json file uploaded".to_string()))
+}
+
+pub async fn get_rss_articles(State(state): State<AppState>, auth: AuthContext, body: Option<Json<RssArticlesRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let req = body.map(|b| b.0).unwrap_or(RssArticlesRequest { source_url: None, sort_name: None, sort_url: None, page: None });
     let source_url = req.source_url.ok_or_else(|| AppError::BadRequest("RSS源链接不能为空".to_string()))?;
     let sort_url = req.sort_url.unwrap_or_else(|| source_url.clone());
@@ -122,8 +175,8 @@ pub async fn get_rss_articles(State(state): State<AppState>, Query(q): Query<Acc
     Ok(Json(ApiResponse::ok(data)))
 }
 
-pub async fn get_rss_content(State(state): State<AppState>, Query(q): Query<AccessTokenQuery>, body: Option<Json<RssContentRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = resolve_user_ns(&state, q.access_token.as_deref(), q.secure_key.as_deref()).await?;
+pub async fn get_rss_content(State(state): State<AppState>, auth: AuthContext, body: Option<Json<RssContentRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(&state, auth.access_token(), auth.secure_key(), auth.user_ns()).await?;
     let req = body.map(|b| b.0).unwrap_or(RssContentRequest { source_url: None, link: None, origin: None });
     let source_url = req.source_url.ok_or_else(|| AppError::BadRequest("RSS链接不能为空".to_string()))?;
     let link = req.link.ok_or_else(|| AppError::BadRequest("RSS文章链接不能为空".to_string()))?;
@@ -137,8 +190,8 @@ pub async fn get_rss_content(State(state): State<AppState>, Query(q): Query<Acce
     Ok(Json(ApiResponse::ok(Value::String(body))))
 }
 
-async fn resolve_user_ns(state: &AppState, access_token: Option<&str>, secure_key: Option<&str>) -> Result<String, AppError> {
-    match state.user_service.resolve_user_ns(access_token, secure_key).await {
+async fn resolve_user_ns(state: &AppState, access_token: Option<&str>, secure_key: Option<&str>, user_ns: Option<&str>) -> Result<String, AppError> {
+    match state.user_service.resolve_user_ns_with_override(access_token, secure_key, user_ns).await {
         Ok(ns) => Ok(ns),
         Err(_) => Err(AppError::BadRequest("NEED_LOGIN".to_string())),
     }
@@ -161,6 +214,24 @@ async fn write_list<T: serde::Serialize>(state: &AppState, user_ns: &str, name: 
     let data = serde_json::to_string(list).map_err(|e| AppError::BadRequest(e.to_string()))?;
     fs::write(path, data).await.map_err(|e| AppError::Internal(e.into()))?;
     Ok(())
+}
+
+fn extract_rss_sources(payload: serde_json::Value) -> Result<Vec<RssSource>, AppError> {
+    if payload.is_array() {
+        return serde_json::from_value::<Vec<RssSource>>(payload)
+            .map_err(|e| AppError::BadRequest(e.to_string()));
+    }
+    if let Some(obj) = payload.as_object() {
+        for key in ["rssSources", "rssSourceList", "data", "sources"] {
+            if let Some(v) = obj.get(key) {
+                if v.is_array() {
+                    return serde_json::from_value::<Vec<RssSource>>(v.clone())
+                        .map_err(|e| AppError::BadRequest(e.to_string()));
+                }
+            }
+        }
+    }
+    Err(AppError::BadRequest("invalid rss sources payload".to_string()))
 }
 
 fn upsert_by_key<T, F>(list: &mut Vec<T>, item: T, key_fn: F)

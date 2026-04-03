@@ -74,14 +74,14 @@
 
 #### 1.2 认证链路改造（优先级：高）
 
-- [ ] 将普通 API 的 `accessToken` 从 URL 参数迁移到请求头
-- [ ] 将 `secureKey` 从 URL 参数迁移到请求头
-- [ ] 统一封装认证注入逻辑到请求层
-- [ ] 设计并实现“非 axios 请求”的认证方案
+- [x] 将普通 API 的 `accessToken` 从 URL 参数迁移到请求头
+- [x] 将 `secureKey` 从 URL 参数迁移到请求头
+- [x] 统一封装认证注入逻辑到请求层
+- [x] 设计并实现“非 axios 请求”的认证方案
 
 **必须补充的设计项**
 
-- [ ] 明确 SSE 的认证方案
+- [x] 明确 SSE 的认证方案
 - [ ] 明确 `window.open` 下载/预览链接的认证方案
 - [ ] 明确 WebDAV 相关访问链路的认证方案
 
@@ -113,15 +113,15 @@
 - [ ] `getBookInfo`
 - [ ] `getChapterList`
 - [ ] `getBookContent`
-- [ ] `searchBookMultiSSE`
-- [ ] `searchBookSourceSSE`
-- [ ] `cacheBookSSE`
+- [x] `searchBookMultiSSE`
+- [x] `searchBookSourceSSE`
+- [x] `cacheBookSSE`
 
 **验收标准**：接口清单完整，关键接口有自动回归校验
 
 #### 1.4 Service Worker 风险收敛（优先级：高）
 
-- [ ] 审查当前 Service Worker 对 API/SSE 的影响
+- [x] 审查当前 Service Worker 对 API/SSE 的影响
 - [ ] 开发环境默认禁用 Service Worker
 - [ ] 生产环境明确绕过 `/reader3/*` API 请求缓存
 - [ ] SSE 请求明确不走离线缓存

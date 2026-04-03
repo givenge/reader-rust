@@ -3,6 +3,20 @@ import { Message, MessageBox } from "element-ui";
 import { errorTypeList } from "./config";
 import store from "./vuex";
 
+export const buildAuthHeaders = () => {
+  const headers = {};
+  if (store.state.token) {
+    headers.Authorization = `Bearer ${store.state.token}`;
+  }
+  if (store.state.isManagerMode && store.state.secureKey) {
+    headers["X-Secure-Key"] = store.state.secureKey;
+    if (store.state.userNS) {
+      headers["X-User-NS"] = store.state.userNS;
+    }
+  }
+  return headers;
+};
+
 const service = Axios.create({
   baseURL: store.getters.api,
   withCredentials: true,
@@ -17,7 +31,11 @@ store.watch(
 );
 
 service.interceptors.request.use(
-  config => config,
+  config => {
+    config.headers = config.headers || {};
+    Object.assign(config.headers, buildAuthHeaders());
+    return config;
+  },
   error => {
     // console.log(error); // for debug
     return Promise.reject(error);
@@ -47,13 +65,6 @@ export const request = async ({
   // post 默认显示返回的信息
   if (alert === undefined) {
     alert = method === "post";
-  }
-  if (store.state.token) {
-    params.accessToken = store.state.token;
-  }
-  if (store.state.isManagerMode && store.state.secureKey) {
-    params.secureKey = store.state.secureKey;
-    params.userNS = store.state.userNS;
   }
   // 防止 ie 缓存 GET 请求
   params.v = new Date().getTime();
@@ -108,7 +119,6 @@ export const request = async ({
           "操作确认"
         );
         if (result && result.action === "confirm" && result.value) {
-          params.secureKey = result.value;
           store.commit("setSecureKey", result.value);
           return await request({
             url,

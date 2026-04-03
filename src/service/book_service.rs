@@ -2,16 +2,21 @@ use crate::crawler::{http_client::HttpClient, fetcher::{RequestSpec, HttpMethod,
 use crate::error::error::AppError;
 use crate::model::{book::Book, book_chapter::BookChapter, book_source::BookSource, search::SearchBook};
 use crate::parser::rule_engine::RuleEngine;
-use crate::parser::js::eval_js_search_with_source;
+use crate::parser::js::{eval_js, eval_js_search_with_source};
 use crate::storage::cache::file_cache::FileCache;
 use tokio::fs;
 use std::path::PathBuf;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use urlencoding::encode;
 use crate::util::hash::md5_hex;
+use crate::util::text::{normalize_source_url, repair_encoded_url};
 
 /// State for background chapter fetching
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChapterPagination {
+    pub user_ns: String,
     pub source: BookSource,
     pub toc_url: String,
     pub visited_urls: Vec<String>,
@@ -26,19 +31,58 @@ pub struct BookService {
     parser: RuleEngine,
     cache: FileCache,
     storage_dir: PathBuf,
+    source_cookies: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl BookService {
     pub fn new(http: HttpClient, parser: RuleEngine, cache: FileCache, storage_dir: &str) -> Self {
         let storage_dir = PathBuf::from(storage_dir);
-        Self { http, parser, cache, storage_dir }
+        Self {
+            http,
+            parser,
+            cache,
+            storage_dir,
+            source_cookies: Arc::new(RwLock::new(HashMap::new())),
+        }
     }
 
     pub fn http_client(&self) -> &reqwest::Client {
         self.http.client()
     }
 
-    pub async fn search_book(&self, source: &BookSource, key: &str, page: i32) -> Result<Vec<SearchBook>, AppError> {
+    fn source_cookie_key(&self, user_ns: &str, source_url: &str) -> String {
+        format!("{}::{}", user_ns, normalize_source_url(source_url))
+    }
+
+    async fn apply_source_cookie(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+        headers: &mut Vec<(String, String)>,
+    ) {
+        let key = self.source_cookie_key(user_ns, &source.book_source_url);
+        if let Some(cookie) = self.source_cookies.read().await.get(&key).cloned() {
+            if !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("cookie")) {
+                headers.push(("Cookie".to_string(), cookie));
+            }
+        }
+    }
+
+    pub async fn set_source_cookie(&self, user_ns: &str, source_url: &str, cookie: &str) {
+        let cookie = cookie.trim();
+        if cookie.is_empty() {
+            return;
+        }
+        let key = self.source_cookie_key(user_ns, source_url);
+        self.source_cookies.write().await.insert(key, cookie.to_string());
+    }
+
+    pub async fn clear_source_cookie(&self, user_ns: &str, source_url: &str) {
+        let key = self.source_cookie_key(user_ns, source_url);
+        self.source_cookies.write().await.remove(&key);
+    }
+
+    pub async fn search_book(&self, user_ns: &str, source: &BookSource, key: &str, page: i32) -> Result<Vec<SearchBook>, AppError> {
         let search_url = source.search_url.clone().ok_or_else(|| AppError::BadRequest("missing search_url".to_string()))?;
         tracing::info!("searching book from {}: key={}, page={}, url={}", source.book_source_name, key, page, search_url);
         let mut spec = analyze_url(&search_url, key, page, &source.book_source_url).map_err(|e| {
@@ -54,6 +98,7 @@ impl BookService {
                 }
             }
         }
+        self.apply_source_cookie(user_ns, source, &mut spec.headers).await;
 
         tracing::debug!("search_book fetched spec: {:?}", spec);
         let res = fetch(&self.http, spec).await.map_err(|e| {
@@ -66,17 +111,62 @@ impl BookService {
         Ok(books)
     }
 
-    pub async fn explore_book(&self, source: &BookSource, rule_find_url: &str, page: i32) -> Result<Vec<SearchBook>, AppError> {
+    pub async fn explore_book(&self, user_ns: &str, source: &BookSource, rule_find_url: &str, page: i32) -> Result<Vec<SearchBook>, AppError> {
         if rule_find_url.trim().is_empty() {
             return Err(AppError::BadRequest("ruleFindUrl required".to_string()));
         }
-        let spec = analyze_url(rule_find_url, "", page, &source.book_source_url)?;
+        let mut spec = analyze_url(rule_find_url, "", page, &source.book_source_url)?;
+
+        if let Some(header_str) = &source.header {
+            if let Ok(headers) = serde_json::from_str::<std::collections::HashMap<String, String>>(header_str) {
+                for (k, v) in headers {
+                    spec.headers.push((k, v));
+                }
+            }
+        }
+        self.apply_source_cookie(user_ns, source, &mut spec.headers).await;
+
         let res = fetch(&self.http, spec).await?;
         Ok(self.parser.explore_books(source, &res.body, &res.url))
     }
 
-    pub async fn get_book_info(&self, source: &BookSource, book_url: &str) -> Result<Book, AppError> {
-        let res = fetch(&self.http, RequestSpec { url: book_url.to_string(), method: HttpMethod::GET, headers: vec![], body: None }).await?;
+    pub async fn login_book_source(&self, source: &BookSource) -> Result<serde_json::Value, AppError> {
+        let login_url = source
+            .login_url
+            .clone()
+            .filter(|v| !v.trim().is_empty())
+            .ok_or_else(|| AppError::BadRequest("missing loginUrl".to_string()))?;
+
+        let mut spec = analyze_url(&login_url, "", 1, &source.book_source_url)?;
+        if let Some(header_str) = &source.header {
+            if let Ok(headers) = serde_json::from_str::<std::collections::HashMap<String, String>>(header_str) {
+                for (k, v) in headers {
+                    spec.headers.push((k, v));
+                }
+            }
+        }
+
+        let res = fetch(&self.http, spec).await?;
+        let check_result = if let Some(login_check_js) = source.login_check_js.as_deref().filter(|s| !s.trim().is_empty()) {
+            Some(eval_js(login_check_js, &res.body, &res.url).unwrap_or_default())
+        } else {
+            None
+        };
+
+        Ok(serde_json::json!({
+            "success": true,
+            "status": res.status,
+            "url": res.url,
+            "checkResult": check_result,
+            "bodyPreview": res.body.chars().take(500).collect::<String>(),
+            "bodyHtml": res.body
+        }))
+    }
+
+    pub async fn get_book_info(&self, user_ns: &str, source: &BookSource, book_url: &str) -> Result<Book, AppError> {
+        let mut headers = vec![];
+        self.apply_source_cookie(user_ns, source, &mut headers).await;
+        let res = fetch(&self.http, RequestSpec { url: book_url.to_string(), method: HttpMethod::GET, headers, body: None }).await?;
         Ok(self.parser.book_info(source, &res.body, &res.url, book_url))
     }
 
@@ -100,8 +190,10 @@ impl BookService {
     }
 
     /// Get first page of chapters and pagination info for background fetching
-    pub async fn get_chapter_list_first_page(&self, source: &BookSource, toc_url: &str) -> Result<(Vec<BookChapter>, ChapterPagination), AppError> {
-        let res = fetch(&self.http, RequestSpec { url: toc_url.to_string(), method: HttpMethod::GET, headers: vec![], body: None }).await?;
+    pub async fn get_chapter_list_first_page(&self, user_ns: &str, source: &BookSource, toc_url: &str) -> Result<(Vec<BookChapter>, ChapterPagination), AppError> {
+        let mut headers = vec![];
+        self.apply_source_cookie(user_ns, source, &mut headers).await;
+        let res = fetch(&self.http, RequestSpec { url: toc_url.to_string(), method: HttpMethod::GET, headers, body: None }).await?;
         let (chapters, next_urls) = self.parser.chapter_list(source, &res.body, &res.url);
 
         let mut chapter_index = 0i32;
@@ -138,6 +230,7 @@ impl BookService {
             .collect();
 
         let pagination = ChapterPagination {
+            user_ns: user_ns.to_string(),
             source: source.clone(),
             toc_url: toc_url.to_string(),
             visited_urls: vec![toc_url.to_string(), actual_visited_url],
@@ -166,7 +259,9 @@ impl BookService {
                 if visited_page_urls.contains(&url) { continue; }
                 visited_page_urls.insert(url.clone());
 
-                let res = fetch(&self.http, RequestSpec { url: url.clone(), method: HttpMethod::GET, headers: vec![], body: None }).await?;
+                let mut headers = vec![];
+                self.apply_source_cookie(&pagination.user_ns, &pagination.source, &mut headers).await;
+                let res = fetch(&self.http, RequestSpec { url: url.clone(), method: HttpMethod::GET, headers, body: None }).await?;
                 let (chapters, _) = self.parser.chapter_list(&pagination.source, &res.body, &res.url);
 
                 // Check if this page is a duplicate (all chapters already seen)
@@ -198,7 +293,9 @@ impl BookService {
                 if visited_page_urls.contains(&current_url) { break; }
                 visited_page_urls.insert(current_url.clone());
 
-                let res = fetch(&self.http, RequestSpec { url: current_url.clone(), method: HttpMethod::GET, headers: vec![], body: None }).await?;
+                let mut headers = vec![];
+                self.apply_source_cookie(&pagination.user_ns, &pagination.source, &mut headers).await;
+                let res = fetch(&self.http, RequestSpec { url: current_url.clone(), method: HttpMethod::GET, headers, body: None }).await?;
                 let (chapters, next_urls) = self.parser.chapter_list(&pagination.source, &res.body, &res.url);
 
                 // Check if this page is a duplicate
@@ -345,7 +442,9 @@ impl BookService {
             visited_urls.insert(current_url.clone());
 
             tracing::debug!("get_content fetching: {}", current_url);
-            let res = fetch(&self.http, RequestSpec { url: current_url.clone(), method: HttpMethod::GET, headers: vec![], body: None }).await?;
+            let mut headers = vec![];
+            self.apply_source_cookie(user_ns, source, &mut headers).await;
+            let res = fetch(&self.http, RequestSpec { url: current_url.clone(), method: HttpMethod::GET, headers, body: None }).await?;
             tracing::debug!("get_content fetch done, body len={}", res.body.len());
             let content = self.parser.content(source, &res.body, &res.url);
             tracing::debug!("get_content parsed content len={}", content.len());
@@ -445,6 +544,7 @@ impl BookService {
     }
 
     pub async fn save_book(&self, user_ns: &str, mut book: Book) -> Result<Book, AppError> {
+        sanitize_book_urls(&mut book);
         if book.origin.trim().is_empty() {
             return Err(AppError::BadRequest("missing origin".to_string()));
         }
@@ -493,9 +593,34 @@ impl BookService {
         Ok(book)
     }
 
+    pub async fn save_books(&self, user_ns: &str, books: Vec<Book>) -> Result<Vec<Book>, AppError> {
+        let mut normalized = Vec::with_capacity(books.len());
+        for mut book in books {
+            sanitize_book_urls(&mut book);
+            if book.origin.trim().is_empty() {
+                return Err(AppError::BadRequest("missing origin".to_string()));
+            }
+            if book.book_url.trim().is_empty() {
+                return Err(AppError::BadRequest("bookUrl required".to_string()));
+            }
+            normalized.push(book);
+        }
+        self.write_bookshelf(user_ns, &normalized).await?;
+        Ok(normalized)
+    }
+
     pub async fn delete_book(&self, user_ns: &str, book: &Book) -> Result<bool, AppError> {
         let mut list = self.read_bookshelf(user_ns).await?;
         let orig_len = list.len();
+        let removed: Vec<Book> = list.iter().filter(|b| {
+            if !book.book_url.is_empty() && b.book_url == book.book_url {
+                return true;
+            }
+            if !book.name.is_empty() && !book.author.is_empty() && b.name == book.name && b.author == book.author {
+                return true;
+            }
+            false
+        }).cloned().collect();
         list.retain(|b| {
             if !book.book_url.is_empty() && b.book_url == book.book_url {
                 return false;
@@ -508,6 +633,9 @@ impl BookService {
         let deleted = list.len() != orig_len;
         if deleted {
             self.write_bookshelf(user_ns, &list).await?;
+            for removed_book in &removed {
+                let _ = self.clear_book_related_cache(user_ns, removed_book).await;
+            }
         }
         Ok(deleted)
     }
@@ -515,7 +643,18 @@ impl BookService {
     pub async fn delete_books(&self, user_ns: &str, books: Vec<Book>) -> Result<usize, AppError> {
         let mut list = self.read_bookshelf(user_ns).await?;
         let mut deleted = 0usize;
+        let mut removed_books: Vec<Book> = Vec::new();
         for book in books {
+            let matched: Vec<Book> = list.iter().filter(|b| {
+                if !book.book_url.is_empty() && b.book_url == book.book_url {
+                    return true;
+                }
+                if !book.name.is_empty() && !book.author.is_empty() && b.name == book.name && b.author == book.author {
+                    return true;
+                }
+                false
+            }).cloned().collect();
+            removed_books.extend(matched);
             let before = list.len();
             list.retain(|b| {
                 if !book.book_url.is_empty() && b.book_url == book.book_url {
@@ -532,6 +671,9 @@ impl BookService {
         }
         if deleted > 0 {
             self.write_bookshelf(user_ns, &list).await?;
+            for removed_book in &removed_books {
+                let _ = self.clear_book_related_cache(user_ns, removed_book).await;
+            }
         }
         Ok(deleted)
     }
@@ -622,6 +764,14 @@ impl BookService {
         Ok(())
     }
 
+    pub async fn delete_book_sources_cache(&self, user_ns: &str, book_url: &str) -> Result<(), AppError> {
+        let path = self.book_source_cache_path(user_ns, book_url);
+        if path.exists() {
+            fs::remove_file(&path).await.map_err(|e| AppError::Internal(e.into()))?;
+        }
+        Ok(())
+    }
+
     fn book_source_cache_path(&self, user_ns: &str, book_url: &str) -> PathBuf {
         let name = md5_hex(book_url);
         self.storage_dir.join("data").join(user_ns).join("book_sources").join(format!("{}.json", name))
@@ -638,8 +788,11 @@ impl BookService {
         }
         let data = fs::read_to_string(&path).await
             .map_err(|e| AppError::Internal(e.into()))?;
-        let list: Vec<Book> = serde_json::from_str(&data)
+        let mut list: Vec<Book> = serde_json::from_str(&data)
             .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        for book in &mut list {
+            sanitize_book_urls(book);
+        }
         Ok(list)
     }
 
@@ -698,6 +851,31 @@ impl BookService {
         }
         Ok(())
     }
+
+    async fn clear_book_related_cache(&self, user_ns: &str, book: &Book) -> Result<(), AppError> {
+        if !book.book_url.is_empty() {
+            let _ = self.delete_book_cache(user_ns, &book.book_url).await;
+            let _ = self.delete_book_sources_cache(user_ns, &book.book_url).await;
+            let _ = self.delete_chapter_list_cache(user_ns, &book.book_url).await;
+        }
+        if let Some(toc_url) = &book.toc_url {
+            if !toc_url.is_empty() {
+                let _ = self.delete_chapter_list_cache(user_ns, toc_url).await;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn sanitize_book_urls(book: &mut Book) {
+    book.book_url = repair_encoded_url(&book.book_url);
+    book.origin = normalize_source_url(&book.origin);
+    if let Some(toc_url) = &book.toc_url {
+        book.toc_url = Some(repair_encoded_url(toc_url));
+    }
+    if let Some(cover_url) = &book.cover_url {
+        book.cover_url = Some(repair_encoded_url(cover_url));
+    }
 }
 
 fn file_ext_from_url(url: &str) -> Option<String> {
@@ -728,13 +906,14 @@ fn content_type_from_ext(ext: &str) -> String {
 fn analyze_url(m_url: &str, key: &str, page: i32, base_url: &str) -> Result<RequestSpec, AppError> {
     tracing::debug!("analyzing url: {}", m_url);
     let mut rule_url = m_url.to_string();
+    let base_url = normalize_source_url(base_url);
 
     // 1. Evaluate {{js}} blocks
     while let Some(start) = rule_url.find("{{") {
         if let Some(end) = rule_url[start..].find("}}") {
             let script = &rule_url[start + 2..start + end];
             tracing::debug!("evaluating search js: {}", script);
-            let res = eval_js_search_with_source(script, key, page, base_url).map_err(|e| {
+            let res = eval_js_search_with_source(script, key, page, &base_url).map_err(|e| {
                 tracing::error!("js eval failed for search url: {:?}, script: {}", e, script);
                 AppError::Internal(e)
             })?;
@@ -754,7 +933,7 @@ fn analyze_url(m_url: &str, key: &str, page: i32, base_url: &str) -> Result<Requ
     let parts: Vec<&str> = rule_url.splitn(2, ',').collect();
     let mut url = parts[0].trim().to_string();
     if !url.starts_with("http") {
-        url = resolve_url(base_url, &url);
+        url = resolve_url(&base_url, &url);
     }
 
     let mut method = HttpMethod::GET;
@@ -793,20 +972,25 @@ fn analyze_url(m_url: &str, key: &str, page: i32, base_url: &str) -> Result<Requ
 }
 
 fn resolve_url(base: &str, url: &str) -> String {
+    let base = normalize_source_url(base);
+    let url = normalize_source_url(url);
     if url.starts_with("http://") || url.starts_with("https://") {
         return url.to_string();
     }
     if url.starts_with("//") {
         return format!("https:{}", url);
     }
-    let base_parsed = url::Url::parse(base).ok();
+    let base_parsed = url::Url::parse(&base).ok();
     if url.starts_with('/') {
-        if let Some(b) = base_parsed {
+        if let Some(mut b) = base_parsed {
+            b.set_fragment(None);
+            b.set_query(None);
             return format!("{}://{}{}", b.scheme(), b.host_str().unwrap_or(""), url);
         }
     }
-    if let Some(b) = base_parsed {
-        if let Ok(joined) = b.join(url) {
+    if let Some(mut b) = base_parsed {
+        b.set_fragment(None);
+        if let Ok(joined) = b.join(&url) {
             return joined.to_string();
         }
     }

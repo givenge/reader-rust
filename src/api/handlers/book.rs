@@ -7,9 +7,10 @@ use axum::http::{StatusCode, header};
 use serde::Deserialize;
 use serde_json::Value;
 use crate::api::AppState;
-use crate::api::handlers::webdav::AccessTokenQuery;
+use crate::api::auth::AuthContext;
 use crate::error::error::{ApiResponse, AppError};
 use crate::model::{book::Book, book_source::BookSource};
+use crate::util::text::{normalize_source_url, repair_encoded_url};
 use std::convert::Infallible;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
@@ -65,6 +66,7 @@ pub struct ChapterListRequest {
     pub book_source_url: Option<String>,
     #[serde(rename = "bookSource")]
     pub book_source: Option<BookSource>,
+    pub refresh: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -120,6 +122,9 @@ pub struct CacheBookRequest {
     url: Option<String>,
     #[serde(rename = "bookUrl")]
     book_url: Option<String>,
+    #[serde(rename = "tocUrl")]
+    toc_url: Option<String>,
+    count: Option<i32>,
     refresh: Option<i32>,
     #[serde(rename = "concurrentCount")]
     concurrent_count: Option<i32>,
@@ -177,8 +182,8 @@ pub struct SetBookSourceRequest {
     book_source_url: Option<String>,
 }
 
-pub async fn search_book(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<SearchBookRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn search_book(State(state): State<AppState>, auth: AuthContext, Query(q): Query<SearchBookRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     
     let mut req = q;
     if !body.is_empty() {
@@ -199,15 +204,15 @@ pub async fn search_book(State(state): State<AppState>, Query(access_q): Query<A
     let key = req.key.ok_or_else(|| AppError::BadRequest("key required".to_string()))?;
     let page = req.page.unwrap_or(1);
     let source = resolve_book_source(&state, &user_ns, req.book_source_url, req.book_source, None).await?;
-    let books = state.book_service.search_book(&source, &key, page).await.map_err(|e| {
+    let books = state.book_service.search_book(&user_ns, &source, &key, page).await.map_err(|e| {
         tracing::error!("search_book failed: {:?}", e);
         e
     })?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(books).unwrap_or_default())))
 }
 
-pub async fn search_book_multi(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<SearchBookMultiRequest>, body: Option<Json<SearchBookMultiRequest>>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn search_book_multi(State(state): State<AppState>, auth: AuthContext, Query(q): Query<SearchBookMultiRequest>, body: Option<Json<SearchBookMultiRequest>>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let key = req.key.ok_or_else(|| AppError::BadRequest("key required".to_string()))?;
     let page = req.page.unwrap_or(1);
@@ -232,7 +237,8 @@ pub async fn search_book_multi(State(state): State<AppState>, Query(access_q): Q
     for source in sources {
         let svc = state.book_service.clone();
         let k = key.clone();
-        tasks.push(tokio::spawn(async move { svc.search_book(&source, &k, page).await }));
+        let user_ns = user_ns.clone();
+        tasks.push(tokio::spawn(async move { svc.search_book(&user_ns, &source, &k, page).await }));
     }
     let mut results: Vec<crate::model::search::SearchBook> = Vec::new();
     for t in tasks {
@@ -294,8 +300,8 @@ fn merge_search_results(results: Vec<crate::model::search::SearchBook>) -> Vec<c
     result
 }
 
-pub async fn explore_book(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<ExploreBookRequest>, body: Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn explore_book(State(state): State<AppState>, auth: AuthContext, Query(q): Query<ExploreBookRequest>, body: Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let mut req = q;
     if !body.is_empty() {
         if let Ok(v) = serde_json::from_slice::<ExploreBookRequest>(&body) {
@@ -322,12 +328,12 @@ pub async fn explore_book(State(state): State<AppState>, Query(access_q): Query<
     let rule_find_url = req.rule_find_url.ok_or_else(|| AppError::BadRequest("ruleFindUrl required".to_string()))?;
     let page = req.page.unwrap_or(1);
     let source = resolve_book_source(&state, &user_ns, req.book_source_url, req.book_source, Some(&rule_find_url)).await?;
-    let list = state.book_service.explore_book(&source, &rule_find_url, page).await?;
+    let list = state.book_service.explore_book(&user_ns, &source, &rule_find_url, page).await?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(list).unwrap_or_default())))
 }
 
-pub async fn get_book_info(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<BookInfoRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_book_info(State(state): State<AppState>, auth: AuthContext, Query(q): Query<BookInfoRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     
     let mut req = q;
     if !body.is_empty() {
@@ -345,13 +351,14 @@ pub async fn get_book_info(State(state): State<AppState>, Query(access_q): Query
     }
     
     let url = req.url.ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
+    let url = repair_encoded_url(&url);
     let source = resolve_book_source(&state, &user_ns, req.book_source_url, req.book_source, Some(&url)).await?;
-    let book = state.book_service.get_book_info(&source, &url).await?;
+    let book = state.book_service.get_book_info(&user_ns, &source, &url).await?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(book).unwrap_or_default())))
 }
 
-pub async fn get_chapter_list(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<ChapterListRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_chapter_list(State(state): State<AppState>, auth: AuthContext, Query(q): Query<ChapterListRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
 
     let mut req = q;
     if !body.is_empty() {
@@ -363,31 +370,41 @@ pub async fn get_chapter_list(State(state): State<AppState>, Query(access_q): Qu
                     "tocUrl" => req.toc_url = Some(v.into_owned()),
                     "bookUrl" | "url" => req.book_url = Some(v.into_owned()),
                     "bookSourceUrl" | "origin" => req.book_source_url = Some(v.into_owned()),
+                    "refresh" => req.refresh = v.parse::<i32>().ok(),
                     _ => {}
                 }
             }
         }
     }
 
+    let do_refresh = req.refresh.unwrap_or(0) > 0;
+
     let source = resolve_book_source(&state, &user_ns, req.book_source_url.clone(), req.book_source.clone(), req.book_url.as_deref().or(req.toc_url.as_deref())).await?;
     let toc_url = if let Some(u) = req.toc_url {
-        u
+        repair_encoded_url(&u)
     } else if let Some(book_url) = req.book_url {
-        let book = state.book_service.get_book_info(&source, &book_url).await?;
-        book.toc_url.clone().unwrap_or(book_url)
+        let book_url = repair_encoded_url(&book_url);
+        let book = state.book_service.get_book_info(&user_ns, &source, &book_url).await?;
+        repair_encoded_url(book.toc_url.as_deref().unwrap_or(&book_url))
     } else {
         return Err(AppError::BadRequest("tocUrl or bookUrl required".to_string()));
     };
 
     // Check if we have cached chapters
-    if let Ok(Some(cached)) = state.book_service.load_chapter_list_cache(&user_ns, &toc_url).await {
-        if !cached.is_empty() {
-            return Ok(Json(ApiResponse::ok(serde_json::to_value(cached).unwrap_or_default())));
+    if do_refresh {
+        let _ = state.book_service.delete_chapter_list_cache(&user_ns, &toc_url).await;
+    }
+
+    if !do_refresh {
+        if let Ok(Some(cached)) = state.book_service.load_chapter_list_cache(&user_ns, &toc_url).await {
+            if !cached.is_empty() {
+                return Ok(Json(ApiResponse::ok(serde_json::to_value(cached).unwrap_or_default())));
+            }
         }
     }
 
     // Get first page of chapters
-    let (chapters, pagination) = state.book_service.get_chapter_list_first_page(&source, &toc_url).await?;
+    let (chapters, pagination) = state.book_service.get_chapter_list_first_page(&user_ns, &source, &toc_url).await?;
 
     // Save first page to cache immediately
     let _ = state.book_service.save_chapter_list_cache(&user_ns, &toc_url, &chapters).await;
@@ -424,8 +441,8 @@ pub async fn get_chapter_list(State(state): State<AppState>, Query(access_q): Qu
     Ok(Json(ApiResponse::ok(serde_json::to_value(chapters).unwrap_or_default())))
 }
 
-pub async fn get_book_content(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<BookContentRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_book_content(State(state): State<AppState>, auth: AuthContext, Query(q): Query<BookContentRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
 
     let mut req = q;
     if !body.is_empty() {
@@ -457,7 +474,7 @@ pub async fn get_book_content(State(state): State<AppState>, Query(access_q): Qu
         if req.index.is_some() && !url.contains("/read/") && !url.contains("/chapter/") {
             // url is bookUrl, need to get chapter from index
             let source = resolve_book_source(&state, &user_ns, req.book_source_url.clone(), req.book_source.clone(), Some(url)).await?;
-            let book_info = state.book_service.get_book_info(&source, url).await?;
+            let book_info = state.book_service.get_book_info(&user_ns, &source, url).await?;
             let toc_url = book_info.toc_url.as_deref().unwrap_or(url);
 
             // If refresh is requested, delete chapter list cache first
@@ -465,10 +482,18 @@ pub async fn get_book_content(State(state): State<AppState>, Query(access_q): Qu
                 let _ = state.book_service.delete_chapter_list_cache(&user_ns, toc_url).await;
             }
 
-            let chapters = state.book_service.get_chapter_list_with_cache(&user_ns, &source, toc_url, do_refresh).await?;
+            let mut chapters = state.book_service.get_chapter_list_with_cache(&user_ns, &source, toc_url, do_refresh).await?;
             let idx = req.index.unwrap() as usize;
+            
             if idx >= chapters.len() {
-                return Err(AppError::BadRequest("chapter index out of range".to_string()));
+                // If index is out of range, it's possible our cache was partial (first page only).
+                // Try a forced refresh to get the full list synchronously.
+                tracing::info!("Index {} out of range (len={}). Attempting forced refresh for {}", idx, chapters.len(), toc_url);
+                chapters = state.book_service.get_chapter_list_with_cache(&user_ns, &source, toc_url, true).await?;
+                
+                if idx >= chapters.len() {
+                    return Err(AppError::BadRequest(format!("chapter index out of range (max: {})", chapters.len())));
+                }
             }
             (url.clone(), chapters[idx].url.clone())
         } else {
@@ -495,8 +520,8 @@ pub async fn get_book_content(State(state): State<AppState>, Query(access_q): Qu
     Ok(Json(ApiResponse::ok(serde_json::Value::String(content))))
 }
 
-pub async fn delete_book_cache(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<DeleteCacheRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn delete_book_cache(State(state): State<AppState>, auth: AuthContext, Query(q): Query<DeleteCacheRequest>, body: axum::body::Bytes) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
 
     let mut req = q;
     if !body.is_empty() {
@@ -526,11 +551,24 @@ pub async fn delete_book_cache(State(state): State<AppState>, Query(access_q): Q
     // Delete all chapter content cache for this book
     let deleted_content = state.book_service.delete_book_cache(&user_ns, &book_url).await?;
 
-    // Try to delete chapter list cache (using book_url as toc_url)
-    if state.book_service.chapter_list_cache_exists(&user_ns, &book_url).await {
-        state.book_service.delete_chapter_list_cache(&user_ns, &book_url).await?;
-        deleted_chapter_list = true;
+    // Try to delete chapter list cache by shelf book toc_url first, then book_url fallback
+    let mut candidate_toc_urls = vec![book_url.clone()];
+    if let Ok(Some(shelf_book)) = state.book_service.get_shelf_book(&user_ns, &book_url).await {
+        if let Some(toc_url) = shelf_book.toc_url {
+            if !candidate_toc_urls.contains(&toc_url) {
+                candidate_toc_urls.push(toc_url);
+            }
+        }
     }
+
+    for toc_url in candidate_toc_urls {
+        if state.book_service.chapter_list_cache_exists(&user_ns, &toc_url).await {
+            state.book_service.delete_chapter_list_cache(&user_ns, &toc_url).await?;
+            deleted_chapter_list = true;
+        }
+    }
+
+    let _ = state.book_service.delete_book_sources_cache(&user_ns, &book_url).await;
 
     Ok(Json(ApiResponse::ok(serde_json::json!({
         "deleted": true,
@@ -539,14 +577,14 @@ pub async fn delete_book_cache(State(state): State<AppState>, Query(access_q): Q
     }))))
 }
 
-pub async fn get_bookshelf(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_bookshelf(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let list = state.book_service.get_bookshelf(&user_ns).await?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(list).unwrap_or_default())))
 }
 
-pub async fn save_book(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>, Json(mut book): Json<Book>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn save_book(State(state): State<AppState>, auth: AuthContext, Json(mut book): Json<Book>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     if book.book_url.trim().is_empty() {
         return Err(AppError::BadRequest("bookUrl required".to_string()));
     }
@@ -554,9 +592,15 @@ pub async fn save_book(State(state): State<AppState>, Query(access_q): Query<Acc
         return Err(AppError::BadRequest("origin required".to_string()));
     }
 
+    book.book_url = repair_encoded_url(&book.book_url);
+    book.origin = normalize_source_url(&book.origin);
+    if let Some(toc_url) = &book.toc_url {
+        book.toc_url = Some(repair_encoded_url(toc_url));
+    }
+
     if book.toc_url.is_none() || book.name.trim().is_empty() {
         if let Some(source) = state.book_source_service.get(&user_ns, &book.origin).await? {
-            if let Ok(info) = state.book_service.get_book_info(&source, &book.book_url).await {
+            if let Ok(info) = state.book_service.get_book_info(&user_ns, &source, &book.book_url).await {
                 merge_book(&mut book, info);
             }
         }
@@ -566,15 +610,37 @@ pub async fn save_book(State(state): State<AppState>, Query(access_q): Query<Acc
     Ok(Json(ApiResponse::ok(serde_json::to_value(saved).unwrap_or_default())))
 }
 
+pub async fn save_books(State(state): State<AppState>, auth: AuthContext, Json(mut books): Json<Vec<Book>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+
+    for book in &mut books {
+        if book.book_url.trim().is_empty() {
+            return Err(AppError::BadRequest("bookUrl required".to_string()));
+        }
+        if book.origin.trim().is_empty() {
+            return Err(AppError::BadRequest("origin required".to_string()));
+        }
+
+        book.book_url = repair_encoded_url(&book.book_url);
+        book.origin = normalize_source_url(&book.origin);
+        if let Some(toc_url) = &book.toc_url {
+            book.toc_url = Some(repair_encoded_url(toc_url));
+        }
+    }
+
+    let saved = state.book_service.save_books(&user_ns, books).await?;
+    Ok(Json(ApiResponse::ok(serde_json::to_value(saved).unwrap_or_default())))
+}
+
 pub async fn set_book_source(
     State(state): State<AppState>,
-    Query(access_q): Query<AccessTokenQuery>,
+    auth: AuthContext,
     Query(q): Query<SetBookSourceRequest>,
     body: Bytes,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
     let user_ns = state
         .user_service
-        .resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref())
+        .resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns())
         .await
         .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
 
@@ -643,7 +709,7 @@ pub async fn set_book_source(
         }
     }
 
-    match state.book_service.get_book_info(&new_source, &new_book_url).await {
+    match state.book_service.get_book_info(&user_ns, &new_source, &new_book_url).await {
         Ok(info) => merge_book(&mut updated, info),
         Err(err) => {
             tracing::warn!(
@@ -669,8 +735,8 @@ pub async fn set_book_source(
     )))
 }
 
-pub async fn delete_book(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>, Json(book): Json<Book>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn delete_book(State(state): State<AppState>, auth: AuthContext, Json(book): Json<Book>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let deleted = state.book_service.delete_book(&user_ns, &book).await?;
     if !deleted {
         return Err(AppError::BadRequest("书架书籍不存在".to_string()));
@@ -678,19 +744,20 @@ pub async fn delete_book(State(state): State<AppState>, Query(access_q): Query<A
     Ok(Json(ApiResponse::ok(serde_json::json!("删除书籍成功"))))
 }
 
-pub async fn delete_books(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>, Json(books): Json<Vec<Book>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn delete_books(State(state): State<AppState>, auth: AuthContext, Json(books): Json<Vec<Book>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let count = state.book_service.delete_books(&user_ns, books).await?;
     Ok(Json(ApiResponse::ok(serde_json::json!({"deleted": count}))))
 }
 
-pub async fn save_book_progress(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<SaveBookProgressRequest>, body: Option<Json<SaveBookProgressRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn save_book_progress(State(state): State<AppState>, auth: AuthContext, Query(q): Query<SaveBookProgressRequest>, body: Option<Json<SaveBookProgressRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let book_url = req.url
         .or(req.book_url)
         .or(req.search_book.and_then(|s| s.book_url))
         .ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
+    let book_url = repair_encoded_url(&book_url);
     let index = req.index.ok_or_else(|| AppError::BadRequest("index required".to_string()))?;
 
     let shelf_book = state.book_service.get_shelf_book(&user_ns, &book_url).await?
@@ -722,33 +789,71 @@ pub async fn save_book_progress(State(state): State<AppState>, Query(access_q): 
     Ok(Json(ApiResponse::ok(serde_json::json!(""))))
 }
 
-pub async fn get_shelf_book(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<GetShelfBookRequest>, body: Option<Json<GetShelfBookRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_shelf_book(State(state): State<AppState>, auth: AuthContext, Query(q): Query<GetShelfBookRequest>, body: Option<Json<GetShelfBookRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let url = req.url.ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
-    let book = state.book_service.get_shelf_book(&user_ns, &url).await?
+    let book = state.book_service.get_shelf_book(&user_ns, &repair_encoded_url(&url)).await?
         .ok_or_else(|| AppError::BadRequest("书籍不存在".to_string()))?;
     Ok(Json(ApiResponse::ok(serde_json::to_value(book).unwrap_or_default())))
 }
 
-pub async fn get_shelf_book_with_cache_info(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_shelf_book_with_cache_info(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let books = state.book_service.get_bookshelf(&user_ns).await?;
     let mut result: Vec<Value> = Vec::with_capacity(books.len());
+    let mut prefetch_books = Vec::new();
+
     for book in books {
         let mut cached_count = 0usize;
-        if let (Some(toc_url), Ok(Some(source))) = (book.toc_url.clone(), state.book_source_service.get(&user_ns, &book.origin).await) {
-            if let Ok(chapters) = state.book_service.get_chapter_list(&user_ns, &source, &toc_url).await {
+
+        let candidate_toc_urls = if let Some(toc_url) = &book.toc_url {
+            vec![toc_url.clone(), book.book_url.clone()]
+        } else {
+            vec![book.book_url.clone()]
+        };
+
+        let mut found_cached_chapters = false;
+        for toc_url in candidate_toc_urls {
+            if let Ok(Some(chapters)) = state.book_service.load_chapter_list_cache(&user_ns, &toc_url).await {
                 let urls: Vec<String> = chapters.into_iter().map(|c| c.url).collect();
                 cached_count = state.book_service.cached_chapter_count(&user_ns, &book.book_url, &urls).await.unwrap_or(0);
+                found_cached_chapters = true;
+                break;
             }
         }
+
+        if !found_cached_chapters {
+            prefetch_books.push(book.clone());
+        }
+
         let mut val = serde_json::to_value(&book).unwrap_or(serde_json::json!({}));
         if let Value::Object(ref mut map) = val {
             map.insert("cachedChapterCount".to_string(), serde_json::json!(cached_count));
         }
         result.push(val);
     }
+
+    if !prefetch_books.is_empty() {
+        let state_clone = state.clone();
+        let user_ns_clone = user_ns.clone();
+        tokio::spawn(async move {
+            for book in prefetch_books {
+                if let Ok(Some(source)) = state_clone.book_source_service.get(&user_ns_clone, &book.origin).await {
+                    let mut toc_url = book.toc_url.clone();
+                    if toc_url.is_none() {
+                        if let Ok(info) = state_clone.book_service.get_book_info(&user_ns_clone, &source, &book.book_url).await {
+                            toc_url = info.toc_url.or(Some(book.book_url.clone()));
+                        }
+                    }
+                    if let Some(toc_url) = toc_url.or(Some(book.book_url.clone())) {
+                        let _ = state_clone.book_service.get_chapter_list(&user_ns_clone, &source, &toc_url).await;
+                    }
+                }
+            }
+        });
+    }
+
     Ok(Json(ApiResponse::ok(serde_json::to_value(result).unwrap_or_default())))
 }
 
@@ -772,8 +877,8 @@ pub async fn get_book_cover(State(state): State<AppState>, Query(q): Query<Cover
     }
 }
 
-pub async fn get_invalid_book_sources(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(_q): Query<AccessTokenQuery>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_invalid_book_sources(State(state): State<AppState>, auth: AuthContext) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let path = std::path::PathBuf::from(&state.config.storage_dir)
         .join("cache")
         .join("invalid_book_sources")
@@ -790,8 +895,8 @@ pub async fn get_invalid_book_sources(State(state): State<AppState>, Query(acces
     }
 }
 
-pub async fn cache_book_sse(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<CacheBookRequest>, body: Option<Json<CacheBookRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn cache_book_sse(State(state): State<AppState>, auth: AuthContext, Query(q): Query<CacheBookRequest>, body: Option<Json<CacheBookRequest>>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let book_url = req.url.or(req.book_url).ok_or_else(|| AppError::BadRequest("url required".to_string()))?;
     let refresh = req.refresh.unwrap_or(0) > 0;
@@ -799,61 +904,131 @@ pub async fn cache_book_sse(State(state): State<AppState>, Query(access_q): Quer
 
     let book = state.book_service.get_shelf_book(&user_ns, &book_url).await?
         .ok_or_else(|| AppError::BadRequest("请先加入书架".to_string()))?;
+
     if book.origin.trim().is_empty() {
         return Err(AppError::BadRequest("未配置书源".to_string()));
     }
     let source = state.book_source_service.get(&user_ns, &book.origin).await?
-        .ok_or_else(|| AppError::BadRequest("未配置书源".to_string()))?;
-    let toc_url = book.toc_url.clone().ok_or_else(|| AppError::BadRequest("tocUrl missing".to_string()))?;
-    let book_url = book.book_url.clone();
+        .ok_or_else(|| AppError::BadRequest("书源不存在".to_string()))?;
 
-    let chapters = state.book_service.get_chapter_list(&user_ns, &source, &toc_url).await?;
-    let mut cached_count = 0usize;
-    if !refresh {
-        for ch in &chapters {
-            if state.book_service.is_chapter_cached(&user_ns, &book_url, &ch.url).await {
-                cached_count += 1;
+    // The root TOC url for the book (for fetching the full list)
+    let root_toc_url = book.toc_url.clone().unwrap_or_else(|| book.book_url.clone());
+    
+    // The starting chapter URL for caching (from query params)
+    let start_ch_url = req.toc_url.clone();
+    let cache_count = req.count.unwrap_or(0); // 0 means all
+
+    let mut chapters = state.book_service.get_chapter_list(&user_ns, &source, &root_toc_url).await?;
+    
+    // If a starting URL is provided, narrow down the list
+    if let Some(ch_url) = start_ch_url {
+        if let Some(idx) = chapters.iter().position(|c| c.url == ch_url) {
+            chapters = chapters.split_off(idx);
+        }
+    }
+    
+    // Limit count if requested
+    if cache_count > 0 && cache_count < chapters.len() as i32 {
+        chapters.truncate(cache_count as usize);
+    }
+
+    if chapters.is_empty() {
+        return Err(AppError::BadRequest("没有找到需要缓存的章节".to_string()));
+    }
+
+    let book_url = book.book_url.clone();
+    let (tx, rx) = mpsc::channel::<Event>(32);
+    let state_clone = state.clone();
+    let source_clone = source.clone();
+    let book_url_clone = book_url.clone();
+    let user_ns_clone = user_ns.clone();
+
+    tokio::spawn(async move {
+        let mut cached_count = 0usize;
+        if !refresh {
+            for ch in &chapters {
+                if state_clone.book_service.is_chapter_cached(&user_ns_clone, &book_url_clone, &ch.url).await {
+                    cached_count += 1;
+                }
             }
         }
-    }
+        let mut success = 0usize;
+        let mut failed = 0usize;
+        let _ = tx
+            .send(Event::default().data(serde_json::json!({
+                "cachedCount": cached_count,
+                "successCount": success,
+                "failedCount": failed
+            }).to_string()))
+            .await;
 
-    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrent));
-    let mut tasks = Vec::new();
-    for ch in chapters {
-        let already_cached = !refresh && state.book_service.is_chapter_cached(&user_ns, &book_url, &ch.url).await;
-        if already_cached {
-            continue;
+        let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrent));
+        let mut tasks: FuturesUnordered<_> = FuturesUnordered::new();
+        for ch in chapters {
+            let already_cached = !refresh
+                && state_clone
+                    .book_service
+                    .is_chapter_cached(&user_ns_clone, &book_url_clone, &ch.url)
+                    .await;
+            if already_cached {
+                continue;
+            }
+            let permit = match sem.clone().acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => {
+                    failed += 1;
+                    continue;
+                }
+            };
+            let svc = state_clone.book_service.clone();
+            let src = source_clone.clone();
+            let url = ch.url.clone();
+            let b_url = book_url_clone.clone();
+            let refresh_flag = refresh;
+            let u_ns = user_ns_clone.clone();
+            tasks.push(tokio::spawn(async move {
+                let _permit = permit;
+                svc.cache_chapter(&u_ns, &b_url, &src, &url, refresh_flag).await
+            }));
         }
-        let permit = sem.clone().acquire_owned().await.map_err(|_| AppError::Internal(anyhow::anyhow!("semaphore closed")))?;
-        let svc = state.book_service.clone();
-        let src = source.clone();
-        let url = ch.url.clone();
-        let b_url = book_url.clone();
-        let refresh_flag = refresh;
-        let u_ns = user_ns.clone();
-        tasks.push(tokio::spawn(async move {
-            let _permit = permit;
-            svc.cache_chapter(&u_ns, &b_url, &src, &url, refresh_flag).await
-        }));
-    }
-    let mut success = 0usize;
-    let mut failed = 0usize;
-    for t in tasks {
-        match t.await {
-            Ok(Ok(_)) => success += 1,
-            _ => failed += 1,
+
+        while let Some(task) = tasks.next().await {
+            match task {
+                Ok(Ok(_)) => {
+                    success += 1;
+                    cached_count += 1;
+                }
+                _ => {
+                    failed += 1;
+                }
+            }
+            let _ = tx
+                .send(Event::default().data(serde_json::json!({
+                    "cachedCount": cached_count,
+                    "successCount": success,
+                    "failedCount": failed
+                }).to_string()))
+                .await;
         }
-    }
-    cached_count += success;
-    Ok(Json(ApiResponse::ok(serde_json::json!({
-        "cachedCount": cached_count,
-        "successCount": success,
-        "failedCount": failed
-    }))))
+
+        let _ = tx
+            .send(
+                Event::default()
+                    .event("end")
+                    .data(serde_json::json!({
+                        "cachedCount": cached_count,
+                        "successCount": success,
+                        "failedCount": failed
+                    }).to_string()),
+            )
+            .await;
+    });
+
+    Ok(Sse::new(ReceiverStream::new(rx).map(Ok::<_, Infallible>)))
 }
 
-pub async fn search_book_multi_sse(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<SearchBookMultiSseRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn search_book_multi_sse(State(state): State<AppState>, auth: AuthContext, Query(q): Query<SearchBookMultiSseRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let key = q.key.unwrap_or_default();
     let last_index = q.last_index.unwrap_or(-1);
     let search_size = q.search_size.unwrap_or(50).max(1) as usize;
@@ -915,8 +1090,9 @@ pub async fn search_book_multi_sse(State(state): State<AppState>, Query(access_q
                 let svc = state_clone.book_service.clone();
                 let k = key.clone();
                 let cur_idx = idx;
+                let user_ns_value = user_ns.clone();
                 tasks.push(tokio::spawn(async move {
-                    let res = svc.search_book(&source, &k, 1).await;
+                    let res = svc.search_book(&user_ns_value, &source, &k, 1).await;
                     (cur_idx, source.book_source_name, res)
                 }));
                 idx += 1;
@@ -964,8 +1140,8 @@ pub async fn search_book_multi_sse(State(state): State<AppState>, Query(access_q
     Ok(Sse::new(ReceiverStream::new(rx).map(Ok)))
 }
 
-pub async fn search_book_source_sse(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<SearchBookSourceSseRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn search_book_source_sse(State(state): State<AppState>, auth: AuthContext, Query(q): Query<SearchBookSourceSseRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let book_url = q.url.unwrap_or_default();
     let last_index = q.last_index.unwrap_or(-1);
     let search_size = q.search_size.unwrap_or(30).max(1) as usize;
@@ -1024,8 +1200,9 @@ pub async fn search_book_source_sse(State(state): State<AppState>, Query(access_
                 let target_name = book.name.clone();
                 let target_author = book.author.clone();
                 let cur_idx = idx;
+                let user_ns_value = user_ns.clone();
                 tasks.push(tokio::spawn(async move {
-                    let res = svc.search_book(&source, &target_name, 1).await;
+                    let res = svc.search_book(&user_ns_value, &source, &target_name, 1).await;
                     (cur_idx, res, target_name, target_author)
                 }));
                 last_idx = idx;
@@ -1064,8 +1241,8 @@ pub async fn search_book_source_sse(State(state): State<AppState>, Query(access_
     Ok(Sse::new(ReceiverStream::new(rx).map(Ok)))
 }
 
-pub async fn get_available_book_source(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<GetAvailableBookSourceRequest>, body: Option<Json<GetAvailableBookSourceRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn get_available_book_source(State(state): State<AppState>, auth: AuthContext, Query(q): Query<GetAvailableBookSourceRequest>, body: Option<Json<GetAvailableBookSourceRequest>>) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let refresh = req.refresh.unwrap_or(0) > 0;
 
@@ -1110,8 +1287,9 @@ pub async fn get_available_book_source(State(state): State<AppState>, Query(acce
         let svc = state.book_service.clone();
         let name = book.name.clone();
         let author = book.author.clone();
+        let user_ns_value = user_ns.clone();
         tasks.push(tokio::spawn(async move {
-            let res = svc.search_book(&source, &name, 1).await;
+            let res = svc.search_book(&user_ns_value, &source, &name, 1).await;
             (res, name, author)
         }));
     }
@@ -1129,8 +1307,8 @@ pub async fn get_available_book_source(State(state): State<AppState>, Query(acce
     Ok(Json(ApiResponse::ok(serde_json::to_value(result).unwrap_or_default())))
 }
 
-pub async fn book_source_debug_sse(State(state): State<AppState>, Query(access_q): Query<AccessTokenQuery>, Query(q): Query<BookSourceDebugRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
-    let user_ns = state.user_service.resolve_user_ns(access_q.access_token.as_deref(), access_q.secure_key.as_deref()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+pub async fn book_source_debug_sse(State(state): State<AppState>, auth: AuthContext, Query(q): Query<BookSourceDebugRequest>) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let book_source_url = q.book_source_url.unwrap_or_default();
     let keyword = q.keyword.unwrap_or_default();
 
@@ -1157,7 +1335,7 @@ pub async fn book_source_debug_sse(State(state): State<AppState>, Query(access_q
             }
         };
         let _ = tx.send(Event::default().data(json_msg("start search"))).await;
-        match state_clone.book_service.search_book(&source, &keyword, 1).await {
+        match state_clone.book_service.search_book(&user_ns, &source, &keyword, 1).await {
             Ok(list) => {
                 let msg = format!("found {} items", list.len());
                 let _ = tx.send(Event::default().data(json_msg(&msg))).await;
@@ -1192,17 +1370,29 @@ async fn resolve_book_source(state: &AppState, user_ns: &str, book_source_url: O
         return Ok(src);
     }
     if let Some(url) = &book_source_url {
-        if !url.trim().is_empty() {
-            return state.book_source_service.get(&user_ns, url).await?
-                .ok_or_else(|| AppError::NotFound("bookSource not found".to_string()));
+        let normalized = normalize_source_url(url);
+        if !normalized.is_empty() {
+            if let Some(src) = state.book_source_service.get(&user_ns, &normalized).await? {
+                return Ok(src);
+            }
+            let sources = state.book_source_service.list(&user_ns).await?;
+            if let Some(src) = sources.into_iter().find(|s| normalize_source_url(&s.book_source_url) == normalized) {
+                return Ok(src);
+            }
+            return Err(AppError::NotFound("bookSource not found".to_string()));
         }
     }
 
     // Try to find book_source_url from shelf book
     if let Some(b_url) = book_url {
         if let Ok(Some(shelf_book)) = state.book_service.get_shelf_book(&user_ns, b_url).await {
-            if !shelf_book.origin.trim().is_empty() {
-                if let Some(src) = state.book_source_service.get(&user_ns, &shelf_book.origin).await? {
+            let shelf_origin = normalize_source_url(&shelf_book.origin);
+            if !shelf_origin.is_empty() {
+                if let Some(src) = state.book_source_service.get(&user_ns, &shelf_origin).await? {
+                    return Ok(src);
+                }
+                let sources = state.book_source_service.list(&user_ns).await?;
+                if let Some(src) = sources.into_iter().find(|s| normalize_source_url(&s.book_source_url) == shelf_origin) {
                     return Ok(src);
                 }
             }
@@ -1220,7 +1410,8 @@ async fn resolve_book_source(state: &AppState, user_ns: &str, book_source_url: O
             let b_root = extract_root_domain(&b_host);
             let sources = state.book_source_service.list(&user_ns).await?;
             for s in sources {
-                if let Ok(s_url) = url::Url::parse(&s.book_source_url) {
+                let normalized_source_url = normalize_source_url(&s.book_source_url);
+                if let Ok(s_url) = url::Url::parse(&normalized_source_url) {
                     if let Some(s_host) = s_url.host_str() {
                         // Match by exact host or by root domain
                         let s_root = extract_root_domain(s_host);

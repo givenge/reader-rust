@@ -136,55 +136,9 @@ import {
   networkFirstRequest
 } from "./plugins/helper";
 
-Date.prototype.format = function(fmt) {
-  var o = {
-    "M+": this.getMonth() + 1, //月份
-    "d+": this.getDate(), //日
-    "h+": this.getHours(), //小时
-    "m+": this.getMinutes(), //分
-    "s+": this.getSeconds(), //秒
-    "q+": Math.floor((this.getMonth() + 3) / 3), //季度
-    S: this.getMilliseconds() //毫秒
-  };
-  if (/(y+)/.test(fmt)) {
-    fmt = fmt.replace(
-      RegExp.$1,
-      (this.getFullYear() + "").substr(4 - RegExp.$1.length)
-    );
-  }
-  for (var k in o) {
-    if (new RegExp("(" + k + ")").test(fmt)) {
-      fmt = fmt.replace(
-        RegExp.$1,
-        RegExp.$1.length == 1 ? o[k] : ("00" + o[k]).substr(("" + o[k]).length)
-      );
-    }
-  }
-  return fmt;
-};
-
-//字符编码数值对应的存储长度：
-//UCS-2编码(16进制) UTF-8 字节流(二进制)
-//0000 - 007F       0xxxxxxx （1字节）
-//0080 - 07FF       110xxxxx 10xxxxxx （2字节）
-//0800 - FFFF       1110xxxx 10xxxxxx 10xxxxxx （3字节）
-String.prototype.getBytesLength = function() {
-  var totalLength = 0;
-  var charCode;
-  for (var i = 0; i < this.length; i++) {
-    charCode = this.charCodeAt(i);
-    if (charCode < 0x007f) {
-      totalLength++;
-    } else if (0x0080 <= charCode && charCode <= 0x07ff) {
-      totalLength += 2;
-    } else if (0x0800 <= charCode && charCode <= 0xffff) {
-      totalLength += 3;
-    } else {
-      totalLength += 4;
-    }
-  }
-  return totalLength;
-};
+// 初始化工具函数原型扩展（向后兼容）
+import "./utils/date";
+import "./utils/string";
 
 export default {
   name: "app",
