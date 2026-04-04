@@ -7,14 +7,14 @@
           :class="{ active: activeTab === 'chapters' }" 
           @click="activeTab = 'chapters'"
         >
-          鐩綍
+          目录
         </div>
         <div 
           class="tab" 
           :class="{ active: activeTab === 'bookmarks' }" 
           @click="activeTab = 'bookmarks'"
         >
-          涔︾
+          书签
         </div>
       </div>
       <div class="header-actions">
@@ -33,19 +33,19 @@
     </div>
 
     <div v-if="activeTab === 'bookmarks'" class="bookmark-toolbar">
-      <button class="bookmark-action primary" @click="addCurrentBookmark">&#x6DFB;&#x52A0;&#x5F53;&#x524D;&#x9875;&#x4E66;&#x7B7E;</button>
+      <button class="bookmark-action primary" @click="addCurrentBookmark">添加当前页书签</button>
       <button
         class="bookmark-action"
         :class="{ danger: bookmarkEditMode && selectedBookmarkKeys.size > 0 }"
         @click="handleBatchAction"
       >
-        {{ bookmarkEditMode ? (selectedBookmarkKeys.size ? `&#x5220;&#x9664;&#x9009;&#x4E2D;(${selectedBookmarkKeys.size})` : "&#x5B8C;&#x6210;") : "&#x6279;&#x91CF;&#x7BA1;&#x7406;" }}
+        {{ bookmarkEditMode ? (selectedBookmarkKeys.size ? `删除选中(${selectedBookmarkKeys.size})` : '完成') : '批量管理' }}
       </button>
     </div>
 
     <!-- Chapters List -->
     <div v-show="activeTab === 'chapters'" class="list-container" ref="listRef">
-      <div v-if="store.chaptersLoading" class="loading">鍔犺浇鐩綍涓?..</div>
+      <div v-if="store.chaptersLoading" class="loading">加载目录中...</div>
       <div
         v-else
         v-for="(chapter, index) in store.chapters"
@@ -108,6 +108,9 @@ const props = withDefaults(defineProps<{
 }>(), {
   initialTab: 'chapters',
 })
+const emit = defineEmits<{
+  jumpChapter: [index: number]
+}>()
 
 const store = useReaderStore()
 const appStore = useAppStore()
@@ -154,8 +157,7 @@ function scrollToCurrent() {
 }
 
 async function goToChapter(index: number) {
-  await store.loadChapter(index)
-  store.closePanel()
+  emit('jumpChapter', index)
 }
 
 async function refreshCatalog() {

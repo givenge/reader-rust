@@ -20,6 +20,7 @@ import { getBrowserCachedChapter, setBrowserCachedChapter } from '../utils/brows
 
 const READER_SESSION_KEY = 'reader-last-session'
 const READER_READ_HISTORY_PREFIX = 'reader-read-history:'
+const SERVER_PROGRESS_SCALE = 10000
 
 interface PersistedReaderSession {
   book: Book
@@ -154,6 +155,8 @@ export const useReaderStore = defineStore('reader', () => {
   const isAutoScrolling = ref(false)
   const chapterScrollProgress = ref(0)
   const readChapterKeys = ref<Set<string>>(new Set())
+  const progressDirty = ref(false)
+  const lastServerProgressKey = ref('')
 
   const currentChapter = computed(() => chapters.value[currentIndex.value] || null)
   const hasNext = computed(() => currentIndex.value < chapters.value.length - 1)
@@ -309,6 +312,42 @@ export const useReaderStore = defineStore('reader', () => {
     localStorage.setItem(READER_SESSION_KEY, JSON.stringify(payload))
   }
 
+  function encodeServerProgress(progress = chapterScrollProgress.value) {
+    return Math.max(
+      0,
+      Math.min(SERVER_PROGRESS_SCALE, Math.round(Math.max(0, Math.min(1, progress)) * SERVER_PROGRESS_SCALE)),
+    )
+  }
+
+  function decodeServerProgress(position?: number | null) {
+    if (typeof position !== 'number' || Number.isNaN(position)) return 0
+    const normalized = position > 1 ? position / SERVER_PROGRESS_SCALE : position
+    return Math.max(0, Math.min(1, normalized))
+  }
+
+  function currentServerProgressPayload(index = currentIndex.value, progress = chapterScrollProgress.value) {
+    if (!book.value) return null
+    return {
+      bookUrl: book.value.bookUrl,
+      index,
+      position: encodeServerProgress(progress),
+    }
+  }
+
+  function markProgressDirty() {
+    progressDirty.value = true
+  }
+
+  function syncLocalBookProgress(progress = chapterScrollProgress.value) {
+    if (!book.value) return
+    const encodedProgress = encodeServerProgress(progress)
+    book.value.durChapterPos = encodedProgress
+    const shelfBook = shelfStore.books.find((item) => item.bookUrl === book.value?.bookUrl)
+    if (shelfBook) {
+      shelfBook.durChapterPos = encodedProgress
+    }
+  }
+
   function getPersistedReaderSession(): PersistedReaderSession | null {
     try {
       const raw = localStorage.getItem(READER_SESSION_KEY)
@@ -325,6 +364,7 @@ export const useReaderStore = defineStore('reader', () => {
 
     book.value = session.book
     chapters.value = session.chapters
+    loadReadChapterHistory(session.book)
 
     const nextIndex = Math.max(0, Math.min(session.currentIndex || 0, session.chapters.length - 1))
     try {
@@ -570,6 +610,8 @@ export const useReaderStore = defineStore('reader', () => {
     chapterScrollProgress.value = 0
     preloadedContent.value.clear()
     loadReadChapterHistory(b)
+    progressDirty.value = false
+    lastServerProgressKey.value = ''
     chaptersLoading.value = true
     try {
       chapters.value = await getChapterList({
@@ -589,8 +631,62 @@ export const useReaderStore = defineStore('reader', () => {
     currentIndex.value = index
     content.value = chapterContent
     chapterScrollProgress.value = Math.max(0, Math.min(1, progress))
+    if (book.value) {
+      book.value.durChapterIndex = index
+      book.value.durChapterTitle = chapters.value[index]?.title || book.value.durChapterTitle
+      book.value.durChapterTime = Date.now()
+      const shelfBook = shelfStore.books.find((item) => item.bookUrl === book.value?.bookUrl)
+      if (shelfBook) {
+        shelfBook.durChapterIndex = book.value.durChapterIndex
+        shelfBook.durChapterTitle = book.value.durChapterTitle
+        shelfBook.durChapterTime = book.value.durChapterTime
+      }
+    }
+    syncLocalBookProgress(chapterScrollProgress.value)
     localStorage.setItem('reader-currentIndex', String(index))
     saveReaderSession()
+    markProgressDirty()
+  }
+
+  async function persistProgress(index = currentIndex.value, progress = chapterScrollProgress.value) {
+    const payload = currentServerProgressPayload(index, progress)
+    if (!payload) return
+    await saveBookProgress(payload).then(() => {
+      progressDirty.value = false
+      lastServerProgressKey.value = `${payload.bookUrl}::${payload.index}::${payload.position}`
+    }).catch(() => undefined)
+  }
+
+  async function flushProgressToServer(force = false) {
+    const payload = currentServerProgressPayload()
+    if (!payload) return
+    const nextKey = `${payload.bookUrl}::${payload.index}::${payload.position}`
+    if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
+    await persistProgress(payload.index, chapterScrollProgress.value)
+  }
+
+  function flushProgressToServerKeepalive(force = false) {
+    const payload = currentServerProgressPayload()
+    if (!payload || typeof fetch === 'undefined') return
+    const nextKey = `${payload.bookUrl}::${payload.index}::${payload.position}`
+    if (!force && !progressDirty.value && lastServerProgressKey.value === nextKey) return
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+    const token = localStorage.getItem('accessToken')
+    if (token) {
+      headers.Authorization = token
+    }
+
+    void fetch('/reader3/saveBookProgress', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => undefined)
+    progressDirty.value = false
+    lastServerProgressKey.value = nextKey
   }
 
   async function fetchChapterContent(index: number, forceRefresh = false) {
@@ -648,14 +744,18 @@ export const useReaderStore = defineStore('reader', () => {
       const chapterContent = await fetchChapterContent(index, forceRefresh)
       if (chapterContent == null) return
 
-      setActiveChapterState(index, chapterContent, 0)
+      const previousSavedIndex = book.value.durChapterIndex ?? 0
+      const previousSavedProgress = decodeServerProgress(book.value.durChapterPos)
+      const isOpeningSavedChapter = !forceRefresh && index === previousSavedIndex
+      const initialProgress = isOpeningSavedChapter ? previousSavedProgress : 0
+
+      setActiveChapterState(index, chapterContent, initialProgress)
       markChapterAsRead(index)
       appStore.markChapterRead(book.value.bookUrl, index, chapters.value.length)
 
-      await saveBookProgress({
-        bookUrl: book.value.bookUrl,
-        index,
-      }).catch(() => { })
+      if (!isOpeningSavedChapter) {
+        await persistProgress(index, 0)
+      }
 
       if (config.enablePreload) {
         setTimeout(() => preloadAroundChapter(index), forceRefresh ? 1500 : 1000)
@@ -781,7 +881,9 @@ export const useReaderStore = defineStore('reader', () => {
 
   function setChapterScrollProgress(value: number) {
     chapterScrollProgress.value = Math.max(0, Math.min(1, value))
+    syncLocalBookProgress(chapterScrollProgress.value)
     saveReaderSession()
+    markProgressDirty()
   }
 
   async function nextChapter() {
@@ -887,15 +989,16 @@ export const useReaderStore = defineStore('reader', () => {
   return {
     book, chapters, currentIndex, content, loading, chaptersLoading,
     currentChapter, hasNext, hasPrev, readingProgress,
-    loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
-    chapterScrollProgress, setChapterScrollProgress,
-    getPersistedReaderSession, restorePersistedSession,
-    config, updateConfig, resetConfig, saveConfig,
+      loadBook, loadChapter, fetchChapterContent, setActiveChapterState, refreshContent, nextChapter, prevChapter, clear,
+      chapterScrollProgress, setChapterScrollProgress,
+      getPersistedReaderSession, restorePersistedSession,
+      persistProgress, flushProgressToServer, flushProgressToServerKeepalive,
+      config, updateConfig, resetConfig, saveConfig,
     themeIndex, isNight, currentTheme, setThemeIndex, toggleNight,
     autoReading, autoReadingTimer, toggleAutoReading, stopAutoReading,
     activePanel, openPanel, togglePanel, backPanel, closePanel,
     bookmarks, fetchBookmarks, addBookmark, removeBookmark, removeBookmarks,
-    readChapterKeys, isChapterRead,
+    readChapterKeys, isChapterRead, markChapterAsRead,
     replaceRules, fetchReplaceRules,
     switchSource, preloadNextChapter, preloadAroundChapter,
     refreshChapters,
