@@ -45,21 +45,34 @@
 
     <!-- Chapters List -->
     <div v-show="activeTab === 'chapters'" class="list-container" ref="listRef">
+      <!-- Chapter Search -->
+      <div class="search-box">
+        <input
+          v-model="chapterSearch"
+          type="text"
+          placeholder="搜索章节..."
+          class="search-input"
+        />
+        <button v-if="chapterSearch" class="search-clear" @click="chapterSearch = ''">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
       <div v-if="store.chaptersLoading" class="loading">加载目录中...</div>
+      <div v-else-if="filteredChapters.length === 0" class="empty">未找到匹配的章节</div>
       <div
         v-else
-        v-for="(chapter, index) in store.chapters"
-        :key="index"
+        v-for="chapter in filteredChapters"
+        :key="chapter.index"
         class="list-item"
-        :class="{ active: index === store.currentIndex, read: store.isChapterRead(index) }"
-        @click="goToChapter(index)"
+        :class="{ active: chapter.index === store.currentIndex, read: store.isChapterRead(chapter.index) }"
+        @click="goToChapter(chapter.index)"
       >
-        <span class="item-index">{{ index + 1 }}</span>
+        <span class="item-index">{{ chapter.index + 1 }}</span>
         <span class="item-title">{{ chapter.title }}</span>
         <div class="item-status">
-          <span v-if="index === store.currentIndex" class="status-badge current">&#x5F53;&#x524D;</span>
-          <span v-else-if="store.isChapterRead(index)" class="status-badge read">&#x5DF2;&#x8BFB;</span>
-          <span v-if="isChapterCached(chapter.url)" class="status-badge cached">&#x5DF2;&#x7F13;&#x5B58;</span>
+          <span v-if="chapter.index === store.currentIndex" class="status-badge current">当前</span>
+          <span v-else-if="store.isChapterRead(chapter.index)" class="status-badge read">已读</span>
+          <span v-if="isChapterCached(chapter.url)" class="status-badge cached">已缓存</span>
         </div>
       </div>
     </div>
@@ -120,6 +133,18 @@ const listRef = ref<HTMLElement>()
 const bookmarkEditMode = ref(false)
 const selectedBookmarkKeys = ref<Set<string>>(new Set())
 const cachedChapterUrls = ref<Set<string>>(new Set())
+const chapterSearch = ref('')
+
+// Filtered chapters based on search
+const filteredChapters = computed(() => {
+  if (!chapterSearch.value.trim()) {
+    return store.chapters.map((chapter, index) => ({ ...chapter, index }))
+  }
+  const searchTerm = chapterSearch.value.toLowerCase().trim()
+  return store.chapters
+    .map((chapter, index) => ({ ...chapter, index }))
+    .filter(chapter => chapter.title.toLowerCase().includes(searchTerm))
+})
 
 onMounted(() => {
   activeTab.value = props.initialTab
@@ -308,6 +333,57 @@ function formatDate(ts?: number) {
   padding: 8px 0;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+}
+
+.search-box {
+  position: relative;
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+
+.search-input {
+  width: 100%;
+  padding: 8px 32px 8px 12px;
+  border: 1px solid rgba(0,0,0,0.1);
+  border-radius: 8px;
+  background: rgba(0,0,0,0.03);
+  color: inherit;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.2s;
+}
+
+.search-input:focus {
+  border-color: var(--color-primary, #c97f3a);
+  background: rgba(0,0,0,0.02);
+}
+
+.search-clear {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.1);
+  color: inherit;
+  border: none;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.search-clear:hover {
+  opacity: 1;
+}
+
+.search-clear svg {
+  width: 12px;
+  height: 12px;
 }
 
 .bookmark-toolbar {

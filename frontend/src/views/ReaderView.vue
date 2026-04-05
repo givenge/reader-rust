@@ -1228,16 +1228,46 @@ function handleKeydown(e: KeyboardEvent) {
   if (tagName === 'input' || tagName === 'textarea' || tagName === 'select' || activeElement?.isContentEditable) {
     return
   }
-  if (store.activePanel) return
-  if (selectionMenu.value.visible && e.key === 'Escape') {
-    hideSelectionMenu()
+
+  // Handle Escape key first - close panels or go home
+  if (e.key === 'Escape') {
+    if (store.activePanel) {
+      store.closePanel()
+      return
+    }
+    if (selectionMenu.value.visible) {
+      hideSelectionMenu()
+      return
+    }
+    if (showSearch.value) {
+      closeSearch()
+      return
+    }
+    if (showTTSPanel.value) {
+      showTTSPanel.value = false
+      return
+    }
+    if (showBookInfo.value) {
+      showBookInfo.value = false
+      return
+    }
+    if (showControls.value) {
+      showControls.value = false
+      return
+    }
+    // If nothing is open, go home
+    goHome()
     return
   }
+
+  // Don't process other keys when panels are open
+  if (store.activePanel) return
+
   const container = scrollContainerRef.value
   if (!container) return
-  
+
   const h = container.clientHeight
-  
+
   switch (e.key) {
     case ' ':
     case 'Space':
@@ -1245,12 +1275,22 @@ function handleKeydown(e: KeyboardEvent) {
       pageForward()
       break
     case 'ArrowDown':
+    case 'PageDown':
       e.preventDefault()
-      container.scrollBy({ top: h * 0.8, behavior: 'smooth' })
+      if (isHorizontalPageMode.value) {
+        pageForward()
+      } else {
+        container.scrollBy({ top: h * 0.8, behavior: 'smooth' })
+      }
       break
     case 'ArrowUp':
+    case 'PageUp':
       e.preventDefault()
-      container.scrollBy({ top: -(h * 0.8), behavior: 'smooth' })
+      if (isHorizontalPageMode.value) {
+        pageBackward()
+      } else {
+        container.scrollBy({ top: -(h * 0.8), behavior: 'smooth' })
+      }
       break
     case 'ArrowRight':
       e.preventDefault()
@@ -1260,9 +1300,13 @@ function handleKeydown(e: KeyboardEvent) {
       e.preventDefault()
       prevChapter()
       break
-    case 'Escape':
-      if (showControls.value) showControls.value = false
-      else showControls.value = true
+    case 'Home':
+      e.preventDefault()
+      scrollToTop()
+      break
+    case 'End':
+      e.preventDefault()
+      scrollToBottom()
       break
   }
 }
