@@ -10,11 +10,11 @@ hero:
       text: 快速开始
       link: /guide/quickstart
     - theme: alt
+      text: 用户手册
+      link: /guide/user-manual
+    - theme: alt
       text: API文档
       link: /api/
-- theme: alt
-  text: 用户手册
-  link: /guide/user-manual
 
 features:
   - icon: ⚡
