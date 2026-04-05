@@ -1,7 +1,7 @@
 {
   "name": "reader-docs",
   "version": "1.0.0",
-  "description": "Reader 3.0 文档站点",
+  "description": "Reader-Rust 文档站点",
   "type": "module",
   "scripts": {
     "docs:dev": "vitepress dev",

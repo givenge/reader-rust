@@ -2,7 +2,7 @@ import { defineConfig } from 'vitepress'
 
 export default defineConfig({
   base: '/reader-rust/',
-  title: 'Reader 3.0',
+  title: 'Reader-Rust',
   description: '阅读3.0 - Rust版书源阅读服务器',
 
   themeConfig: {
@@ -19,10 +19,10 @@ export default defineConfig({
           text: '入门',
           items: [
             { text: '简介', link: '/guide/' },
-            { text: '功能特性', link: '/guide/features' },
-            { text: '用户手册', link: '/guide/user-manual' },
             { text: '快速开始', link: '/guide/quickstart' },
-            { text: '配置', link: '/guide/configuration' }
+            { text: '配置', link: '/guide/configuration' },
+            { text: '功能特性', link: '/guide/features' },
+            { text: '用户手册', link: '/guide/user-manual' }
           ]
         },
         {

@@ -1,6 +1,6 @@
 # API 概述
 
-Reader 3.0 提供 RESTful API，所有接口都以 `/reader3` 为前缀。
+Reader-Rust 提供 RESTful API，所有接口都以 `/reader3` 为前缀。
 
 ## 基础 URL
 
