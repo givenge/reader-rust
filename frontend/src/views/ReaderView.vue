@@ -1689,7 +1689,6 @@ watch(
 .chapter-content {
   margin: 0 auto;
   padding: 80px 24px;
-  min-height: 100%;
   transition: all 0.3s ease;
 }
 
@@ -1735,7 +1734,7 @@ watch(
 
 .continuous-reading {
   margin: 0 auto;
-  padding: 32px 0 80px;
+  padding: 32px 0 24px;
 }
 
 .continuous-chapter {
@@ -1795,9 +1794,9 @@ watch(
 }
 
 .chapter-footer {
-  margin-top: 60px;
+  margin-top: 24px;
   text-align: center;
-  padding-bottom: 40px;
+  padding-bottom: 8px;
 }
 
 .horizontal-next-floating {

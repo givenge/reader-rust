@@ -353,7 +353,7 @@ async function handleRefreshBooks() {
   display: flex;
   align-items: center;
   gap: var(--space-8);
-  z-index: 100;
+  z-index: calc(var(--z-sticky) + 5);
   backdrop-filter: blur(12px);
 }
 

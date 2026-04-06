@@ -1,7 +1,7 @@
 <template>
   <div id="app">
     <AppTopBar v-if="showHeader" />
-    <main class="app-main" :class="{ 'with-bottom-nav': showBottomNav }">
+    <main class="app-main" :class="{ 'with-bottom-nav': showBottomNav, 'without-header': !showHeader }">
       <router-view />
     </main>
     <AppBottomNav v-if="showBottomNav" />
@@ -71,6 +71,10 @@ body {
   height: calc(100vh - var(--header-height) - var(--safe-area-top));
   min-height: 0;
   overflow: hidden;
+}
+
+.app-main.without-header {
+  height: 100vh;
 }
 
 .app-main.with-bottom-nav {
