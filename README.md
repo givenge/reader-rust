@@ -1,5 +1,7 @@
 # Reader-Rust
 
+作者：[@grandy](https://linux.do/u/grandy/summary)
+
 基于 [reader](https://github.com/hectorqin/reader) 重构的 Rust 版书源阅读服务端。
 
 ## 文档
