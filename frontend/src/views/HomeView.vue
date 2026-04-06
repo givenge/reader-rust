@@ -337,12 +337,12 @@ async function handleRefreshBooks() {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding-bottom: var(--space-20);
+  padding-bottom: calc(104px + var(--space-6));
 }
 
 .batch-toolbar {
   position: fixed;
-  bottom: var(--space-6);
+  bottom: calc(104px + var(--space-4));
   left: 50%;
   transform: translateX(-50%);
   background: var(--color-bg-elevated);
@@ -414,7 +414,7 @@ async function handleRefreshBooks() {
 @media (max-width: 640px) {
   .batch-toolbar {
     width: calc(100% - var(--space-8));
-    bottom: var(--space-4);
+    bottom: calc(104px + var(--space-3));
     gap: var(--space-4);
     justify-content: space-between;
   }
