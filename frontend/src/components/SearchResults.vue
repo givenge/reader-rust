@@ -148,6 +148,9 @@ defineEmits<{
 
 <style scoped>
 .search-results {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
   padding: 0 var(--space-6);
 }
 

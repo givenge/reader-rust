@@ -228,7 +228,9 @@ async function handleRefreshBooks() {
 
 <style scoped>
 .home-view {
-  min-height: calc(100dvh - var(--header-height) - var(--safe-area-top));
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -238,9 +240,13 @@ async function handleRefreshBooks() {
 }
 
 .shelf-content {
+  height: 100%;
   max-width: var(--content-max-width);
   margin: 0 auto;
   padding: 0 var(--space-6);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 
@@ -328,6 +334,9 @@ async function handleRefreshBooks() {
 }
 
 .shelf-grid-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   padding-bottom: var(--space-20);
 }
 

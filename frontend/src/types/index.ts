@@ -34,6 +34,10 @@ export interface Book {
   updateTime?: string
   cachedChapterCount?: number
   browserCachedChapterCount?: number
+  recentKind?: 'book' | 'rss'
+  rssSourceUrl?: string
+  rssLink?: string
+  rssPubDate?: string
 }
 
 // ─── 搜索结果 ───

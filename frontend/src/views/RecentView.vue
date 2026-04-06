@@ -4,19 +4,26 @@
       <div class="recent-header">
         <h1 class="recent-title">
           最近阅读
-          <span class="recent-count">({{ shelfStore.recentBooks.length }})</span>
+          <span class="recent-count">({{ filteredRecentBooks.length }})</span>
         </h1>
-        <button
-          class="recent-clear-btn"
-          :disabled="!shelfStore.recentBooks.length"
-          @click="handleClearRecent"
-        >
-          一键清空
-        </button>
+        <div class="recent-actions">
+          <div class="recent-filters">
+            <button class="filter-chip" :class="{ active: activeFilter === 'all' }" @click="activeFilter = 'all'">全部</button>
+            <button class="filter-chip" :class="{ active: activeFilter === 'book' }" @click="activeFilter = 'book'">书籍</button>
+            <button class="filter-chip" :class="{ active: activeFilter === 'rss' }" @click="activeFilter = 'rss'">RSS</button>
+          </div>
+          <button
+            class="recent-clear-btn"
+            :disabled="!shelfStore.recentBooks.length"
+            @click="handleClearRecent"
+          >
+            一键清空
+          </button>
+        </div>
       </div>
 
       <BookGrid
-        :books="shelfStore.recentBooks"
+        :books="filteredRecentBooks"
         :loading="shelfStore.loading"
         empty-text="暂无最近阅读"
         :show-delete-action="true"
@@ -34,7 +41,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import BookDetailModal from '../components/BookDetailModal.vue'
 import BookGrid from '../components/BookGrid.vue'
@@ -49,6 +56,17 @@ const readerStore = useReaderStore()
 const showDetail = ref(false)
 const selectedBook = ref<Book | SearchBook | null>(null)
 const openingBookUrl = ref('')
+const activeFilter = ref<'all' | 'book' | 'rss'>('all')
+
+const filteredRecentBooks = computed(() => {
+  if (activeFilter.value === 'book') {
+    return shelfStore.recentBooks.filter((book) => book.recentKind !== 'rss')
+  }
+  if (activeFilter.value === 'rss') {
+    return shelfStore.recentBooks.filter((book) => book.recentKind === 'rss')
+  }
+  return shelfStore.recentBooks
+})
 
 onMounted(async () => {
   await shelfStore.fetchBooks().catch(() => undefined)
@@ -57,6 +75,19 @@ onMounted(async () => {
 
 async function handleBookClick(book: Book | SearchBook) {
   const currentBook = book as Book
+  if (currentBook.recentKind === 'rss' && currentBook.rssSourceUrl && (currentBook.rssLink || currentBook.bookUrl)) {
+    await router.push({
+      name: 'rss-article',
+      query: {
+        source: currentBook.rssSourceUrl,
+        link: currentBook.rssLink || currentBook.bookUrl,
+        title: currentBook.name || '',
+        pubDate: currentBook.rssPubDate || '',
+        origin: currentBook.author || '',
+      },
+    })
+    return
+  }
   if (!currentBook.origin || !currentBook.bookUrl) return
   if (openingBookUrl.value === currentBook.bookUrl) return
 
@@ -75,6 +106,11 @@ async function handleBookClick(book: Book | SearchBook) {
 }
 
 function handleBookInfo(book: Book | SearchBook) {
+  const currentBook = book as Book
+  if (currentBook.recentKind === 'rss') {
+    handleBookClick(book)
+    return
+  }
   selectedBook.value = book
   showDetail.value = true
 }
@@ -90,13 +126,19 @@ async function handleClearRecent() {
 
 <style scoped>
 .recent-view {
-  min-height: calc(100dvh - var(--header-height) - var(--safe-area-top));
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .recent-content {
+  height: 100%;
   max-width: var(--content-max-width);
   margin: 0 auto;
   padding: 0 var(--space-6);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .recent-header {
@@ -105,6 +147,13 @@ async function handleClearRecent() {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
+  flex-shrink: 0;
+}
+
+.recent-content :deep(.book-grid) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .recent-title {
@@ -117,6 +166,37 @@ async function handleClearRecent() {
   font-size: var(--text-base);
   font-weight: 400;
   color: var(--color-text-tertiary);
+}
+
+.recent-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.recent-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.filter-chip {
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-light);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.filter-chip.active {
+  border-color: rgba(201, 127, 58, 0.26);
+  background: rgba(201, 127, 58, 0.1);
+  color: var(--color-primary);
 }
 
 .recent-clear-btn {
@@ -137,5 +217,17 @@ async function handleClearRecent() {
 .recent-clear-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+  .recent-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .recent-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 </style>

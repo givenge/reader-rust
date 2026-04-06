@@ -142,6 +142,7 @@ async function handleAddToShelf(book: Book | SearchBook) {
 <style scoped>
 .explore-view {
   height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--color-bg);
@@ -191,7 +192,8 @@ async function handleAddToShelf(book: Book | SearchBook) {
   width: 200px;
   border-right: 1px solid var(--color-border);
   background: var(--color-bg-elevated);
-  overflow-y: auto;
+  overflow: auto;
+  min-height: 0;
 }
 
 .categories-scroll {
@@ -222,7 +224,8 @@ async function handleAddToShelf(book: Book | SearchBook) {
 
 .content-panel {
   flex: 1;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: auto;
   padding: 24px;
   position: relative;
 }

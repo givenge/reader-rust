@@ -28,7 +28,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from './stores/app'
 import AppTopBar from './components/AppTopBar.vue'
@@ -45,6 +45,10 @@ const appStore = useAppStore()
 const showHeader = computed(() => route.name !== 'reader')
 const showBottomNav = computed(() => route.name !== 'reader')
 
+onMounted(() => {
+  appStore.fetchUserInfo()
+})
+
 // Listen for need-login events from API layer
 window.addEventListener('need-login', () => {
   appStore.showLoginModal = true
@@ -52,11 +56,25 @@ window.addEventListener('need-login', () => {
 </script>
 
 <style>
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 #app {
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app-main {
+  height: calc(100vh - var(--header-height) - var(--safe-area-top));
+  min-height: 0;
+  overflow: hidden;
 }
 
 .app-main.with-bottom-nav {
   padding-bottom: calc(104px + var(--safe-area-bottom));
+  height: calc(100vh - var(--header-height) - var(--safe-area-top));
 }
 </style>
