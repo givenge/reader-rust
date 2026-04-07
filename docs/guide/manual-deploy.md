@@ -20,11 +20,16 @@ cargo build --release
 如需静态链接（便于分发）：
 
 ```bash
-# Linux with musl
+# Linux x86
 rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 ```
 
+```bash
+# linux aarch64
+rustup target add aarch64-unknown-linux-musl
+cargo build --release --target aarch64-unknown-linux-musl
+```
 ## 部署步骤
 
 ### 1. 准备目录
