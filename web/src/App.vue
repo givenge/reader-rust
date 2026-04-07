@@ -537,6 +537,12 @@ export default {
               this.$store.commit("setShowManagerMode", true);
             }
             if (res.data.data.userInfo) {
+              if (res.data.data.userInfo.accessToken) {
+                this.$store.commit(
+                  "setToken",
+                  res.data.data.userInfo.accessToken
+                );
+              }
               this.$store.commit("setUserInfo", res.data.data.userInfo);
               // 如果用户是管理员，也显示管理功能
               if (res.data.data.userInfo.isAdmin) {
