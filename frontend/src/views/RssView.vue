@@ -75,6 +75,7 @@
           <div v-if="!store.sources.length" class="empty-box">还没有 RSS 源，先去管理页添加。</div>
           <div v-else-if="!store.activeSourceUrl" class="empty-box">请选择一个 RSS 源。</div>
           <template v-else>
+            <div class="article-list-stack">
             <button
               v-for="article in store.articles"
               :key="`${article.variable || 'rss'}-${article.link}`"
@@ -90,6 +91,7 @@
               </div>
               <div v-if="article.description" class="article-desc">{{ toPlainPreview(article.description) }}</div>
             </button>
+            </div>
             <button v-if="store.hasMore && !store.loading" class="load-more-btn" @click="store.fetchArticles()">加载更多</button>
             <div v-if="store.loading" class="empty-box loading-box">文章加载中...</div>
           </template>
@@ -369,8 +371,8 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
   min-height: 0;
   overflow: hidden;
   padding: 12px;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   box-sizing: border-box;
 }
@@ -401,13 +403,21 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 }
 
 .panel-scroll {
-  flex: 1;
   min-height: 0;
+  height: 100%;
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
 }
 
 .article-list-scroll {
   padding-right: 4px;
+}
+
+.article-list-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .content-scroll {
@@ -456,14 +466,15 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 }
 
 .article-item {
+  display: block;
   width: 100%;
   text-align: left;
   padding: 14px;
   border-radius: 18px;
   border: 1px solid transparent;
   background: var(--color-bg);
-  margin-bottom: 10px;
   transition: all var(--duration-fast) var(--ease-out);
+  flex: 0 0 auto;
 }
 
 .article-item:hover {
@@ -551,6 +562,7 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
     min-height: calc(100dvh - var(--header-height) - 104px - var(--safe-area-top) - var(--safe-area-bottom));
     padding: 6px;
     gap: 4px;
+    overflow: hidden;
   }
 
   .rss-main {
@@ -559,6 +571,7 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
     gap: 8px;
     flex: 1;
     min-height: 0;
+    overflow: hidden;
   }
 
   .toolbar-top,
@@ -636,8 +649,11 @@ async function handleOpenArticle(article: RssArticle & { variable?: string }) {
 
   .article-item {
     padding: 12px;
-    margin-bottom: 8px;
     border-radius: 16px;
+  }
+
+  .article-list-stack {
+    gap: 8px;
   }
 
   .article-title {

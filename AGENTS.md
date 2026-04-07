@@ -2,101 +2,89 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
-## Build and Run Commands
+## Commands
 
 ### Rust Backend
 ```bash
-cargo run                    # Run in development mode
-cargo build --release        # Build for release
-cargo test                   # Run tests
-cargo test --lib <test_name> # Run a specific test
+cargo run                    # Dev mode
+cargo build --release        # Release build
+cargo test                   # All tests
+cargo test --lib <test_name> # Single test
 ```
 
-### Web Frontend (Vue 2)
+### Frontend (two separate apps)
 ```bash
-cd web
-npm install                   # Install dependencies
-npm run serve                # Development server
-npm run build                # Production build
-npm run lint                 # Lint code
+# Vue 3 + Vite + TypeScript (新版前端，默认)
+cd frontend && npm install && npm run dev    # Dev server
+cd frontend && npm run build                 # Builds to frontend/dist/
+
+# Vue 2 + Vue CLI (旧版前端，已废弃)
+cd web && npm install
+cd web && npm run serve                      # Dev server (uses disable-storage.js workaround)
+cd web && npm run build                      # Builds to web/dist/
+cd web && npm run lint                       # ESLint + Prettier
 ```
+
+### Docker
+```bash
+# Build ARM64 image (requires pre-built binary)
+cargo build --release --target aarch64-unknown-linux-musl
+docker build -t reader-rust .
+
+# Build x86_64 image (requires pre-built binary)
+cargo build --release --target x86_64-unknown-linux-musl
+docker build -t reader-rust -f Dockerfile.x86 .
+```
+
+Dockerfiles do NOT compile Rust in-container. Build the binary on the host first, then copy it.
 
 ## Configuration
 
-Configuration is loaded from environment variables. Default values are defined in `src/app/config.rs`. Key settings:
+Loaded from `.env` file (via `dotenvy`) or environment variables. Separator is `__` for nested keys. See `.env.example` for all options.
 
-- `SERVER_HOST` / `SERVER_PORT` - Server binding (default: `0.0.0.0:8080`)
-- `DATABASE_URL` - SQLite path (default: `sqlite:storage/reader.db?mode=rwc`)
-- `WEB_ROOT` - Static web files directory (default: `../reader/web`)
-- `STORAGE_DIR` / `ASSETS_DIR` - Storage paths
-- `LOG_LEVEL` - Logging verbosity (default: `info`)
-- `REQUEST_TIMEOUT_SECS` - HTTP request timeout (default: 15)
+Key settings:
+- `SERVER_HOST` / `SERVER_PORT` — default `0.0.0.0:8080`
+- `DATABASE_URL` — SQLite path, default `sqlite:storage/reader.db?mode=rwc`
+- `WEB_ROOT` — static files path, default `web/dist`
+- `SECURE` / `SECURE_KEY` — security mode toggle
+- `INVITE_CODE` — registration gate
+- `USER_LIMIT` / `USER_BOOK_LIMIT` — default 50 / 2000
+- `LOG_LEVEL` — default `info`
+- `REQUEST_TIMEOUT_SECS` — default 15
 
-Environment variable separator is `__` (double underscore).
+## Architecture
 
-## Architecture Overview
-
-This is a Rust implementation of "阅读3.0" (Reader 3.0) - a book reading API server. It provides book source management, search, chapter retrieval, and content parsing.
+Rust implementation of "阅读3.0" — a book source reading API server.
 
 ### Module Structure
-
-- **`src/api/`** - HTTP handlers and routing (axum)
-  - `router.rs` - Route definitions for all `/reader3/*` endpoints
-  - `handlers/` - Request handlers by domain (book, bookmark, rss, user, etc.)
-  - `AppState` - Shared application state (config, services)
-
-- **`src/service/`** - Business logic layer
-  - `book_service.rs` - Book search, info, chapters, content
-  - `book_source_service.rs` - CRUD for book sources (stored in SQLite)
-  - `user_service.rs` - User management and authentication
-
-- **`src/parser/`** - Content extraction engine
-  - `rule_engine.rs` - Main entry point, auto-detects content type
-  - `html.rs` - CSS selector parsing (using scraper crate)
-  - `jsonpath.rs` - JSONPath queries (using jsonpath_lib)
-  - `js.rs` - JavaScript execution (rquickjs) for `js:` prefixed rules
-
-- **`src/crawler/`** - HTTP fetching
-  - `http_client.rs` - Configurable reqwest client with compression support
-  - `fetcher.rs` - Page fetching with URL resolution
-
-- **`src/model/`** - Data structures
-  - `book_source.rs` - Book source JSON schema with rule definitions
-  - `rule.rs` - SearchRule, BookInfoRule, TocRule, ContentRule types
-
-- **`src/storage/`** - Persistence
-  - `db/` - SQLite via sqlx, with `BookSourceRepo`
-  - `cache/` - File-based chapter content cache (MD5 key)
-  - `fs/` - Filesystem operations for storage/assets
+- `src/api/` — HTTP handlers & routing (axum), routes under `/reader3/*`
+- `src/service/` — Business logic (book search, sources, users)
+- `src/parser/` — Content extraction engine with rule-based parsing
+- `src/crawler/` — HTTP fetching via reqwest
+- `src/model/` — Data structures (BookSource, rules)
+- `src/storage/` — SQLite (sqlx), file cache (MD5 key), filesystem ops
+- `src/app/` — Config, logging, server setup
+- `src/error/` — Error types
+- `src/util/` — Utilities
 
 ### Request Flow
-
-1. `api/handlers/` receives HTTP request
-2. Handler calls `service/` layer
-3. Service fetches remote content via `crawler/http_client.rs`
-4. Content is parsed using `parser/rule_engine.rs` with rules from `BookSource`
-5. Results returned as JSON
+`api/handlers` → `service/` → `crawler/` (fetch) → `parser/rule_engine` (parse with BookSource rules) → JSON response
 
 ### Rule Parsing
-
-Book sources define parsing rules in JSON. The `RuleEngine` auto-detects parsing mode:
-
-- **CSS selectors** - Default for HTML (`.class`, `#id`, `tag`)
-- **JSONPath** - Auto-detected for JSON content (`$.data.list`)
-- **XPath** - Lines starting with `/` or `./`
-- **JavaScript** - Rules prefixed with `js:` or `@js:`
-- **Regex** - Rules starting with `:`
-
-Rule prefixes can be explicit: `@css:`, `@json:`, `@xpath:`, `@regex:`.
+`RuleEngine` auto-detects parsing mode:
+- **CSS selectors** — default for HTML (`.class`, `#id`, `tag`)
+- **JSONPath** — auto-detected for JSON (`$.data.list`)
+- **XPath** — lines starting with `/` or `./`
+- **JavaScript** — `js:` or `@js:` prefix (rquickjs)
+- **Regex** — starts with `:`
+- Explicit prefixes: `@css:`, `@json:`, `@xpath:`, `@regex:`
 
 ### Book Source Format
+JSON objects with `bookSourceUrl`, `bookSourceName`, `searchUrl`/`exploreUrl` (with `${key}` placeholders), and `ruleSearch`/`ruleBookInfo`/`ruleToc`/`ruleContent` parsing rules.
 
-Book sources are JSON objects containing:
-- `bookSourceUrl` / `bookSourceName` - Source identity
-- `searchUrl` / `exploreUrl` - Search/discovery URLs with `${key}` placeholders
-- `ruleSearch` / `ruleBookInfo` / `ruleToc` / `ruleContent` - Parsing rules for each stage
-- Each rule has fields like `bookList`, `name`, `author`, `bookUrl`, etc.
+## Important Notes
 
-## Web Frontend
-
-The `web/` directory contains a Vue 2 frontend (阅读3.0 web client). It connects to the Rust backend API. Build output goes to `web/dist/`, which the backend serves as static files.
+- **Two frontend apps**: `frontend/` is Vue 3 (newer, default), `web/` is Vue 2 (legacy). Docker images use `frontend/dist/`.
+- **`web/` build workaround**: `vue.config.js` disables localStorage via `disable-storage.js` — do not remove this.
+- **`/storage/` is gitignored**: Contains user data and SQLite DB.
+- **No tests currently**: `cargo test` will pass but there are no test files written yet.

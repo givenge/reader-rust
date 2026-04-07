@@ -2,6 +2,7 @@
 target/
 **/target/
 !target/x86_64-unknown-linux-musl/release/reader-rust
+!target/aarch64-unknown-linux-musl/release/reader-rust
 # Dependencies
 web/node_modules/
 
