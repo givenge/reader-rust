@@ -60,6 +60,21 @@ pub async fn get_book_sources(State(state): State<AppState>, auth: AuthContext) 
     Ok(Json(ApiResponse::ok(serde_json::to_value(list).unwrap_or_default())))
 }
 
+pub async fn get_default_book_source_owner(
+    State(state): State<AppState>,
+    auth: AuthContext,
+) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
+    if !state.user_service.secure_enabled() {
+        return Ok(Json(ApiResponse::ok(serde_json::json!({ "username": null }))));
+    }
+    let is_admin = state.user_service.is_admin(auth.access_token(), auth.secure_key()).await?;
+    if !is_admin {
+        return Ok(Json(ApiResponse::err_with_data("请输入管理密码", serde_json::Value::String("NEED_SECURE_KEY".to_string()))));
+    }
+    let username = state.book_source_service.get_default_owner().await?;
+    Ok(Json(ApiResponse::ok(serde_json::json!({ "username": username }))))
+}
+
 pub async fn login_book_source(State(state): State<AppState>, auth: AuthContext, Json(param): Json<BookSourceUrlParam>) -> Result<Json<ApiResponse<serde_json::Value>>, AppError> {
     let user_ns = state.user_service.resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns()).await.map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let url = param.book_source_url.ok_or_else(|| AppError::BadRequest("bookSourceUrl required".to_string()))?;

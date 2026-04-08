@@ -266,13 +266,15 @@ const passwordForm = reactive({
   confirmPassword: '',
 })
 
-const canManageUsers = computed(() => appStore.isSecureMode && appStore.isLoggedIn && !!appStore.userInfo?.isAdmin)
+const canManageUsers = computed(() => appStore.isSecureMode && appStore.isLoggedIn && !!appStore.userInfo?.isAdmin && !appStore.needSecureKey)
 const userManagerTitle = computed(() => {
   if (!appStore.isLoggedIn) return '\u767b\u5f55\u540e\u53ef\u67e5\u770b\u72b6\u6001'
+  if (appStore.needSecureKey) return '\u5f53\u524d\u9700\u8981\u7ba1\u7406\u5bc6\u7801'
   return appStore.userInfo?.isAdmin ? '\u5f53\u524d\u8d26\u53f7\u62e5\u6709\u7ba1\u7406\u5458\u6743\u9650' : '\u5f53\u524d\u8d26\u53f7\u4e0d\u662f\u7ba1\u7406\u5458'
 })
 const userManagerMessage = computed(() => {
   if (!appStore.isLoggedIn) return '\u8bf7\u5148\u767b\u5f55\u7ba1\u7406\u5458\u8d26\u53f7\u540e\u7ba1\u7406\u5176\u4ed6\u7528\u6237\u3002'
+  if (appStore.needSecureKey) return '\u670d\u52a1\u7aef\u5df2\u5f00\u542f\u7ba1\u7406\u5bc6\u7801\u6821\u9a8c\uff0c\u672a\u9a8c\u8bc1\u524d\u65e0\u6cd5\u8bfb\u53d6\u7528\u6237\u5217\u8868\u3002'
   return appStore.userInfo?.isAdmin
     ? '\u652f\u6301\u65b0\u589e\u7528\u6237\u3001\u91cd\u7f6e\u5bc6\u7801\u3001\u5220\u9664\u7528\u6237\u548c\u8c03\u6574\u6743\u9650\u3002'
     : '\u8bf7\u4f7f\u7528\u7ba1\u7406\u5458\u8d26\u53f7\u767b\u5f55\u540e\u518d\u8fdb\u884c\u7528\u6237\u7ba1\u7406\u3002'

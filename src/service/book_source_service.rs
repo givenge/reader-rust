@@ -1,15 +1,22 @@
 use crate::error::error::AppError;
 use crate::model::book_source::BookSource;
 use crate::storage::db::repo::BookSourceRepo;
+use std::path::PathBuf;
+use tokio::fs;
 
 #[derive(Clone)]
 pub struct BookSourceService {
     repo: BookSourceRepo,
+    default_owner_path: PathBuf,
 }
 
 impl BookSourceService {
-    pub fn new(repo: BookSourceRepo) -> Self {
-        Self { repo }
+    pub fn new(repo: BookSourceRepo, storage_dir: &str) -> Self {
+        let default_owner_path = PathBuf::from(storage_dir)
+            .join("data")
+            .join("__default__")
+            .join("defaultBookSourceOwner.txt");
+        Self { repo, default_owner_path }
     }
 
     pub async fn save(&self, user_ns: &str, source: BookSource) -> Result<(), AppError> {
@@ -60,7 +67,16 @@ impl BookSourceService {
 
     /// Set a user's sources as the default sources (for new users)
     pub async fn set_as_default(&self, from_ns: &str) -> Result<i64, AppError> {
-        self.copy_to(from_ns, "__default__").await
+        let count = self.copy_to(from_ns, "__default__").await?;
+        if let Some(dir) = self.default_owner_path.parent() {
+            fs::create_dir_all(dir)
+                .await
+                .map_err(|e| AppError::Internal(e.into()))?;
+        }
+        fs::write(&self.default_owner_path, from_ns)
+            .await
+            .map_err(|e| AppError::Internal(e.into()))?;
+        Ok(count)
     }
 
     /// Copy default sources to a new user
@@ -72,5 +88,20 @@ impl BookSourceService {
         let count = defaults.len() as i64;
         self.save_many(to_ns, defaults).await?;
         Ok(count)
+    }
+
+    pub async fn get_default_owner(&self) -> Result<Option<String>, AppError> {
+        match fs::read_to_string(&self.default_owner_path).await {
+            Ok(value) => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(trimmed.to_string()))
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(AppError::Internal(err.into())),
+        }
     }
 }

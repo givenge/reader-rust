@@ -337,15 +337,18 @@ let persistPositionTimer: number | null = null
 const pendingRestorePosition = ref<SavedReadingPosition | null>(null)
 let pendingRestoreAttempts = 0
 let suppressPositionSaveUntil = 0
+const restoreStabilizeTimers: number[] = []
 const isContinuousMode = computed(() =>
   config.value.readMethod === '上下滚动' || config.value.readMethod === '上下滚动2',
 )
 const hideReadChaptersMode = computed(() => config.value.readMethod === '上下滚动2')
 const isHorizontalPageMode = computed(() => config.value.readMethod === '左右翻页')
-const disableSystemCallout = computed(() => {
+const isIosWebkit = computed(() => {
   const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
-  const isIOS = /iPhone|iPad|iPod/i.test(ua)
-  return isIOS && isMobile.value && config.value.selectAction === 'popup'
+  return /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/i.test(ua) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1)
+})
+const disableSystemCallout = computed(() => {
+  return isIosWebkit.value && isMobile.value && config.value.selectAction === 'popup'
 })
 const touchState = ref({
   startX: 0,
@@ -699,6 +702,7 @@ function loadSavedReadingPosition() {
     if (!selected) {
       pendingRestorePosition.value = null
       pendingRestoreAttempts = 0
+      clearRestoreStabilizers()
       debugPositionLog(raw ? 'ignored saved position' : 'no saved position', {
         key,
         currentIndex: store.currentIndex,
@@ -710,6 +714,7 @@ function loadSavedReadingPosition() {
 
     pendingRestorePosition.value = selected
     pendingRestoreAttempts = 0
+    clearRestoreStabilizers()
     debugPositionLog('loaded saved position', {
       key,
       saved: selected,
@@ -725,6 +730,7 @@ function loadSavedReadingPosition() {
   } catch {
     pendingRestorePosition.value = null
     pendingRestoreAttempts = 0
+    clearRestoreStabilizers()
     debugPositionLog('failed to parse saved position', { key })
   }
 }
@@ -798,7 +804,31 @@ function scheduleSaveReadingPosition() {
 }
 
 function restoreReadingPosition() {
-  const saved = pendingRestorePosition.value
+  return restoreReadingPositionInternal(pendingRestorePosition.value, true)
+}
+
+function clearRestoreStabilizers() {
+  while (restoreStabilizeTimers.length) {
+    const timer = restoreStabilizeTimers.pop()
+    if (typeof timer === 'number') clearTimeout(timer)
+  }
+}
+
+function scheduleRestoreStabilization(saved: SavedReadingPosition) {
+  clearRestoreStabilizers()
+  if (!isIosWebkit.value || isHorizontalPageMode.value) return
+  ;[140, 320, 680].forEach((delay) => {
+    const timer = window.setTimeout(() => {
+      if (store.loading || !scrollContainerRef.value || saved.chapterIndex !== store.currentIndex) return
+      void nextTick(() => {
+        restoreReadingPositionInternal(saved, false)
+      })
+    }, delay)
+    restoreStabilizeTimers.push(timer)
+  })
+}
+
+function restoreReadingPositionInternal(saved: SavedReadingPosition | null, finalize: boolean) {
   const container = scrollContainerRef.value
   if (!saved || !container || saved.chapterIndex !== store.currentIndex) {
     debugPositionLog('restore aborted', {
@@ -822,8 +852,10 @@ function restoreReadingPosition() {
     }
     const maxScroll = Math.max(0, container.scrollWidth - container.clientWidth)
     container.scrollTo({ left: maxScroll * Math.max(0, Math.min(1, saved.progress || 0)), behavior: 'auto' })
-    pendingRestorePosition.value = null
-    pendingRestoreAttempts = 0
+    if (finalize) {
+      pendingRestorePosition.value = null
+      pendingRestoreAttempts = 0
+    }
     debugPositionLog('restored horizontal position', { saved, maxScroll })
     return true
   }
@@ -911,13 +943,17 @@ function restoreReadingPosition() {
   }
 
   container.scrollTo({ top: Math.max(0, targetTop), behavior: 'auto' })
-  pendingRestorePosition.value = null
-  pendingRestoreAttempts = 0
+  if (finalize) {
+    pendingRestorePosition.value = null
+    pendingRestoreAttempts = 0
+    scheduleRestoreStabilization(saved)
+  }
   suppressPositionSaveUntil = Date.now() + 400
   debugPositionLog('restored vertical position', {
     saved,
     targetTop,
     isContinuous: isContinuousMode.value,
+    finalize,
   })
   return true
 }
@@ -1452,6 +1488,7 @@ onUnmounted(() => {
   if (speechTimerTicker) clearInterval(speechTimerTicker)
   if (restorePositionTimer) clearTimeout(restorePositionTimer)
   if (persistPositionTimer) clearTimeout(persistPositionTimer)
+  clearRestoreStabilizers()
   disposeSelection()
   disposeContinuousReading()
   disposeAutoPlayback()

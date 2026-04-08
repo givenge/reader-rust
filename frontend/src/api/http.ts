@@ -1,6 +1,15 @@
 import axios from 'axios'
 import type { ApiResponse } from '../types'
 
+let lastNeedLoginDispatchAt = 0
+
+function dispatchNeedLogin() {
+  const now = Date.now()
+  if (now - lastNeedLoginDispatchAt < 1500) return
+  lastNeedLoginDispatchAt = now
+  window.dispatchEvent(new CustomEvent('need-login'))
+}
+
 const http = axios.create({
   baseURL: '/reader3',
   timeout: 30000,
@@ -26,8 +35,7 @@ http.interceptors.response.use(
     }
     if (!data.isSuccess) {
       if (data.errorMsg === 'NEED_LOGIN' || data.data === 'NEED_LOGIN') {
-        localStorage.removeItem('accessToken')
-        window.dispatchEvent(new CustomEvent('need-login'))
+        dispatchNeedLogin()
       }
       return Promise.reject(new Error(data.errorMsg || '请求失败'))
     }
@@ -39,16 +47,14 @@ http.interceptors.response.use(
     const data = error.response?.data as Partial<ApiResponse> | undefined
     if (data && typeof data === 'object') {
       if (data.errorMsg === 'NEED_LOGIN' || data.data === 'NEED_LOGIN') {
-        localStorage.removeItem('accessToken')
-        window.dispatchEvent(new CustomEvent('need-login'))
+        dispatchNeedLogin()
       }
       if (typeof data.errorMsg === 'string' && data.errorMsg.trim()) {
         return Promise.reject(new Error(data.errorMsg))
       }
     }
     if (error.response?.status === 401) {
-      localStorage.removeItem('accessToken')
-      window.dispatchEvent(new CustomEvent('need-login'))
+      dispatchNeedLogin()
     }
     return Promise.reject(new Error(error.message || '请求失败'))
   }

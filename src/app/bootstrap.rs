@@ -33,7 +33,7 @@ pub async fn run() -> anyhow::Result<()> {
     let cache = FileCache::new(format!("{}/cache", cfg.storage_dir));
 
     let book_service = Arc::new(BookService::new(http, parser, cache, &cfg.storage_dir));
-    let book_source_service = Arc::new(BookSourceService::new(repo));
+    let book_source_service = Arc::new(BookSourceService::new(repo, &cfg.storage_dir));
     let user_service = Arc::new(UserService::new(cfg.clone()));
     let book_group_service = Arc::new(BookGroupService::new(&cfg.storage_dir));
 

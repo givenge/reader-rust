@@ -5,6 +5,10 @@ export function getBookSources() {
   return http.get<BookSource[]>('/getBookSources').then((r) => r.data)
 }
 
+export function getDefaultBookSourceOwner() {
+  return http.get<{ username: string | null }>('/getDefaultBookSourceOwner').then((r) => r.data)
+}
+
 export function loginBookSource(bookSourceUrl: string) {
   return http.post<{
     success: boolean

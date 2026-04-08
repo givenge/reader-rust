@@ -34,117 +34,140 @@
           </div>
 
           <template v-else>
-            <div class="summary-grid">
-              <div class="summary-card">
-                <span>{{ users.length }}</span>
-                <small>账号总数</small>
-              </div>
-              <div class="summary-card">
-                <span>{{ adminCount }}</span>
-                <small>管理员</small>
-              </div>
-              <div class="summary-card">
-                <span>{{ backupEnabledCount }}</span>
-                <small>已开服务器备份</small>
-              </div>
-              <div class="summary-card">
-                <span>{{ localStoreEnabledCount }}</span>
-                <small>已开本地存储</small>
-              </div>
-            </div>
-
-            <section class="panel">
-              <div class="panel-head">
+            <section class="panel top-panel">
+              <div class="panel-head compact-head">
                 <div>
-                  <h3>新增用户</h3>
-                  <p>用户名仅支持小写字母和数字，密码至少 8 位</p>
+                  <h3>总览</h3>
+                  <p v-if="!summaryCollapsed">查看当前默认书源归属，并快速新增用户</p>
+                </div>
+                <div class="top-head-actions">
+                  <div class="default-owner-banner">
+                    <span class="banner-label">当前默认书源</span>
+                    <strong>{{ defaultBookSourceOwner || '未设置' }}</strong>
+                  </div>
+                  <button class="mini-btn" @click="summaryCollapsed = !summaryCollapsed">
+                    {{ summaryCollapsed ? '展开总览' : '收起总览' }}
+                  </button>
                 </div>
               </div>
-              <form class="create-form" @submit.prevent="handleCreateUser">
-                <label class="field">
-                  <span>用户名</span>
-                  <input v-model.trim="createForm.username" type="text" placeholder="例如 reader01" autocomplete="off" />
-                </label>
-                <label class="field">
-                  <span>密码</span>
-                  <input v-model="createForm.password" type="password" placeholder="输入初始密码" autocomplete="new-password" />
-                </label>
-                <button class="action-btn primary" type="submit" :disabled="working">
-                  {{ working ? '处理中...' : '创建用户' }}
-                </button>
-              </form>
+
+              <div v-if="!summaryCollapsed" class="summary-grid compact-summary">
+                <div class="summary-card">
+                  <span>{{ users.length }}</span>
+                  <small>账号总数</small>
+                </div>
+                <div class="summary-card">
+                  <span>{{ adminCount }}</span>
+                  <small>管理员</small>
+                </div>
+                <div class="summary-card">
+                  <span>{{ backupEnabledCount }}</span>
+                  <small>已开服务器备份</small>
+                </div>
+                <div class="summary-card">
+                  <span>{{ localStoreEnabledCount }}</span>
+                  <small>已开本地存储</small>
+                </div>
+              </div>
+
+              <div class="top-tools">
+                <form v-if="!summaryCollapsed" class="create-form compact-create-form" @submit.prevent="handleCreateUser">
+                  <label class="field">
+                    <span>新增用户</span>
+                    <input v-model.trim="createForm.username" type="text" placeholder="用户名" autocomplete="off" />
+                  </label>
+                  <label class="field">
+                    <span>初始密码</span>
+                    <input v-model="createForm.password" type="password" placeholder="至少 8 位" autocomplete="new-password" />
+                  </label>
+                  <button class="action-btn primary" type="submit" :disabled="working">
+                    {{ working ? '处理中...' : '创建用户' }}
+                  </button>
+                </form>
+              </div>
             </section>
 
             <section class="panel list-panel">
               <div class="panel-head">
                 <div>
                   <h3>账号列表</h3>
-                  <p>可直接调整权限、重置密码或删除账号</p>
+                  <p>按钮可直接切换权限、设默认书源、重置密码或删除账号</p>
                 </div>
+                <span class="list-count">显示 {{ filteredUsers.length }} / {{ users.length }}</span>
+              </div>
+              <div class="list-toolbar">
+                <label class="search-field">
+                  <span>搜索用户</span>
+                  <input
+                    v-model.trim="keyword"
+                    type="text"
+                    placeholder="按用户名、管理员、默认书源筛选"
+                    autocomplete="off"
+                  />
+                </label>
               </div>
 
               <div v-if="loading" class="empty-state">正在加载用户列表...</div>
-              <div v-else-if="users.length === 0" class="empty-state">暂无用户数据</div>
+              <div v-else-if="filteredUsers.length === 0" class="empty-state">没有匹配到用户</div>
               <div v-else class="user-list">
-                <article v-for="user in sortedUsers" :key="user.username" class="user-card">
+                <article v-for="user in filteredUsers" :key="user.username" class="user-card">
                   <div class="user-card-top">
                     <div class="user-meta">
                       <div class="user-name-row">
                         <strong>{{ user.username }}</strong>
                         <span v-if="user.username === currentUsername" class="badge accent">当前账号</span>
                         <span v-if="user.isAdmin" class="badge">管理员</span>
+                        <span v-if="user.username === defaultBookSourceOwner" class="badge default-badge">默认书源</span>
                       </div>
                       <div class="user-times">
                         <span>创建时间：{{ formatTime(user.createdAt) }}</span>
                         <span>最近登录：{{ formatTime(user.lastLoginAt) }}</span>
                       </div>
                     </div>
-                    <button
-                      class="mini-btn danger"
-                      :disabled="working || user.username === currentUsername"
-                      @click="handleDeleteUser(user)"
-                    >
-                      删除
-                    </button>
+                    <div class="action-row">
+                      <button
+                        class="mini-btn"
+                        :class="{ active: !!user.enableWebdav }"
+                        :disabled="working"
+                        @click="handleTogglePermission(user, 'enableWebdav', !user.enableWebdav)"
+                      >
+                        服务器备份
+                      </button>
+                      <button
+                        class="mini-btn"
+                        :class="{ active: !!user.enableLocalStore }"
+                        :disabled="working"
+                        @click="handleTogglePermission(user, 'enableLocalStore', !user.enableLocalStore)"
+                      >
+                        本地存储
+                      </button>
+                      <button
+                        class="mini-btn"
+                        :class="{ active: user.username === defaultBookSourceOwner }"
+                        :disabled="working"
+                        @click="handleSetDefaultBookSources(user)"
+                      >
+                        默认书源
+                      </button>
+                      <button
+                        class="mini-btn"
+                        :class="{ active: resetTarget === user.username }"
+                        @click="toggleResetTarget(user.username)"
+                      >
+                        {{ resetTarget === user.username ? '收起重置密码' : '重置密码' }}
+                      </button>
+                      <button
+                        class="mini-btn danger"
+                        :disabled="working || user.username === currentUsername"
+                        @click="handleDeleteUser(user)"
+                      >
+                        删除
+                      </button>
+                    </div>
                   </div>
 
-                  <div class="permission-grid">
-                    <label class="permission-item">
-                      <span>服务器备份</span>
-                      <input
-                        type="checkbox"
-                        :checked="!!user.enableWebdav"
-                        :disabled="working"
-                        @change="handleTogglePermission(user, 'enableWebdav', ($event.target as HTMLInputElement).checked)"
-                      />
-                    </label>
-                    <label class="permission-item">
-                      <span>本地存储</span>
-                      <input
-                        type="checkbox"
-                        :checked="!!user.enableLocalStore"
-                        :disabled="working"
-                        @change="handleTogglePermission(user, 'enableLocalStore', ($event.target as HTMLInputElement).checked)"
-                      />
-                    </label>
-                  </div>
-
-                  <div class="reset-panel">
-                    <button
-                      class="mini-btn"
-                      :disabled="working"
-                      @click="handleSetDefaultBookSources(user)"
-                    >
-                      设为默认书源
-                    </button>
-                    <button
-                      class="mini-btn"
-                      :class="{ active: resetTarget === user.username }"
-                      @click="toggleResetTarget(user.username)"
-                    >
-                      {{ resetTarget === user.username ? '收起重置密码' : '重置密码' }}
-                    </button>
-                    <div v-if="resetTarget === user.username" class="reset-form">
+                  <div v-if="resetTarget === user.username" class="reset-panel">
+                    <div class="reset-form">
                       <input
                         v-model="resetPasswordValue"
                         type="password"
@@ -169,7 +192,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { addUser, deleteUsers, getUserList, resetPassword, updateUser } from '../api/user'
-import { setAsDefaultBookSources } from '../api/source'
+import { getDefaultBookSourceOwner, setAsDefaultBookSources } from '../api/source'
 import { useAppStore } from '../stores/app'
 import type { UserInfo } from '../types'
 
@@ -188,13 +211,16 @@ const loading = ref(false)
 const working = ref(false)
 const resetTarget = ref('')
 const resetPasswordValue = ref('')
+const keyword = ref('')
+const defaultBookSourceOwner = ref('')
+const summaryCollapsed = ref(true)
 const createForm = reactive({
   username: '',
   password: '',
 })
 
 const currentUsername = computed(() => appStore.userInfo?.username || '')
-const canManageUsers = computed(() => appStore.isSecureMode && appStore.isLoggedIn && !!appStore.userInfo?.isAdmin)
+const canManageUsers = computed(() => appStore.isSecureMode && appStore.isLoggedIn && !!appStore.userInfo?.isAdmin && !appStore.needSecureKey)
 const adminCount = computed(() => users.value.filter((user) => user.isAdmin).length)
 const backupEnabledCount = computed(() => users.value.filter((user) => user.enableWebdav).length)
 const localStoreEnabledCount = computed(() => users.value.filter((user) => user.enableLocalStore).length)
@@ -204,16 +230,31 @@ const sortedUsers = computed(() =>
     return a.username.localeCompare(b.username)
   }),
 )
+const filteredUsers = computed(() => {
+  const search = keyword.value.trim().toLowerCase()
+  if (!search) return sortedUsers.value
+  return sortedUsers.value.filter((user) => {
+    const searchable = [
+      user.username,
+      user.isAdmin ? '管理员' : '',
+      user.username === currentUsername.value ? '当前账号' : '',
+      user.username === defaultBookSourceOwner.value ? '默认书源' : '',
+    ].join(' ').toLowerCase()
+    return searchable.includes(search)
+  })
+})
 
 const unavailableTitle = computed(() => {
   if (!appStore.isSecureMode) return '当前未开启安全模式'
   if (!appStore.isLoggedIn) return '需要先登录管理员账号'
+  if (appStore.needSecureKey) return '当前需要管理密码'
   return '当前账号没有用户管理权限'
 })
 
 const unavailableMessage = computed(() => {
   if (!appStore.isSecureMode) return '用户管理仅在多用户安全模式下可用。'
   if (!appStore.isLoggedIn) return '登录管理员账号后，才能管理其他用户。'
+  if (appStore.needSecureKey) return '当前服务端已开启管理密码校验，先输入管理密码后才能读取和修改用户列表。'
   return '请使用管理员账号登录后再试。'
 })
 
@@ -228,6 +269,7 @@ watch(
       createForm.password = ''
       resetTarget.value = ''
       resetPasswordValue.value = ''
+      keyword.value = ''
     }
   },
 )
@@ -257,7 +299,12 @@ async function loadUsers() {
   if (!canManageUsers.value) return
   loading.value = true
   try {
-    applyUserList(await getUserList())
+    const [list, owner] = await Promise.all([
+      getUserList(),
+      getDefaultBookSourceOwner().catch(() => ({ username: null })),
+    ])
+    applyUserList(list)
+    defaultBookSourceOwner.value = owner.username || ''
   } catch (error) {
     appStore.showToast((error as Error).message || '加载用户列表失败', 'error')
   } finally {
@@ -349,6 +396,7 @@ async function handleSetDefaultBookSources(user: UserInfo) {
   working.value = true
   try {
     await setAsDefaultBookSources(user.username)
+    defaultBookSourceOwner.value = user.username
     appStore.showToast(`已将 ${user.username} 的书源设为默认书源`, 'success')
   } catch (error) {
     appStore.showToast((error as Error).message || '设置默认书源失败', 'error')
@@ -379,7 +427,7 @@ async function handleSetDefaultBookSources(user: UserInfo) {
 
 .user-manager-modal {
   width: min(1080px, 100%);
-  max-height: min(88vh, 920px);
+  height: min(92vh, 980px);
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-border-light);
   border-radius: var(--radius-xl);
@@ -455,6 +503,79 @@ async function handleSetDefaultBookSources(user: UserInfo) {
   gap: var(--space-3);
 }
 
+.top-panel {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.compact-head {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.top-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.compact-summary {
+  margin: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.default-owner-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(201, 127, 58, 0.1);
+}
+
+.banner-label {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.top-tools {
+  display: block;
+}
+
+.search-field {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.search-field span {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+.search-field input {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border-light);
+  background: var(--color-bg-sunken);
+  color: var(--color-text);
+  font-size: var(--text-sm);
+  outline: none;
+  transition: border-color var(--duration-fast), box-shadow var(--duration-fast), background var(--duration-fast);
+}
+
+.search-field input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.search-field input:focus {
+  border-color: rgba(201, 127, 58, 0.45);
+  background: var(--color-bg-elevated);
+  box-shadow: 0 0 0 4px rgba(201, 127, 58, 0.12);
+}
+
 .summary-card,
 .panel,
 .notice,
@@ -465,15 +586,21 @@ async function handleSetDefaultBookSources(user: UserInfo) {
 }
 
 .summary-card {
-  padding: var(--space-4);
+  padding: 10px 14px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
+  min-height: auto;
 }
 
 .summary-card span {
-  font-size: var(--text-2xl);
+  font-size: 24px;
   font-weight: 700;
+  line-height: 1.1;
+}
+
+.summary-card small {
+  font-size: 13px;
 }
 
 .summary-card small,
@@ -519,6 +646,14 @@ async function handleSetDefaultBookSources(user: UserInfo) {
   display: flex;
   gap: var(--space-3);
   align-items: end;
+}
+
+.compact-create-form {
+  align-items: end;
+}
+
+.compact-create-form .field {
+  min-width: 0;
 }
 
 .field {
@@ -581,6 +716,12 @@ async function handleSetDefaultBookSources(user: UserInfo) {
   color: var(--color-danger);
 }
 
+.mini-btn.active {
+  background: rgba(201, 127, 58, 0.12);
+  color: var(--color-primary-dark);
+  border-color: rgba(201, 127, 58, 0.18);
+}
+
 .action-btn:disabled,
 .mini-btn:disabled {
   opacity: 0.45;
@@ -594,7 +735,18 @@ async function handleSetDefaultBookSources(user: UserInfo) {
   flex-direction: column;
 }
 
+.list-count {
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+}
+
+.list-toolbar {
+  margin-bottom: var(--space-3);
+}
+
 .user-list {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -646,25 +798,22 @@ async function handleSetDefaultBookSources(user: UserInfo) {
   color: var(--color-primary-dark);
 }
 
-.permission-grid {
-  margin-top: var(--space-4);
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
+.default-badge,
+.status-chip.active {
+  background: rgba(201, 127, 58, 0.12);
+  color: var(--color-primary-dark);
 }
 
-.permission-item {
+.action-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-sunken);
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  flex: 0 0 auto;
 }
 
 .reset-panel {
-  margin-top: var(--space-4);
+  margin-top: var(--space-3);
   display: grid;
   gap: var(--space-3);
 }
@@ -702,14 +851,29 @@ async function handleSetDefaultBookSources(user: UserInfo) {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .top-head-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .top-tools {
+    display: block;
+  }
+
   .create-form,
   .reset-form {
     flex-direction: column;
     align-items: stretch;
   }
 
-  .permission-grid {
-    grid-template-columns: 1fr;
+  .user-card-top {
+    flex-direction: column;
+  }
+
+  .action-row {
+    width: 100%;
+    justify-content: flex-start;
+    margin-top: var(--space-2);
   }
 }
 </style>

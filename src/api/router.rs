@@ -11,6 +11,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/health", get(handlers::health))
         .route("/reader3/getBookSource", get(handlers::get_book_source).post(handlers::get_book_source))
         .route("/reader3/getBookSources", get(handlers::get_book_sources).post(handlers::get_book_sources))
+        .route("/reader3/getDefaultBookSourceOwner", get(handlers::get_default_book_source_owner))
         .route("/reader3/loginBookSource", post(handlers::login_book_source))
         .route("/reader3/bookSourceProxy", any(handlers::book_source_proxy))
         .route("/reader3/bookSourceClientLog", any(handlers::book_source_client_log))
