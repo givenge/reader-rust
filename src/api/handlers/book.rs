@@ -1321,11 +1321,6 @@ pub async fn book_source_debug_sse(State(state): State<AppState>, auth: AuthCont
             let _ = tx.send(Event::default().event("end").data(json_end(0))).await;
             return;
         }
-        if keyword.trim().is_empty() {
-            let _ = tx.send(Event::default().event("error").data(json_err("请输入搜索关键词"))).await;
-            let _ = tx.send(Event::default().event("end").data(json_end(0))).await;
-            return;
-        }
         let source = match state_clone.book_source_service.get(&user_ns, &book_source_url).await {
             Ok(Some(s)) => s,
             _ => {
@@ -1334,6 +1329,20 @@ pub async fn book_source_debug_sse(State(state): State<AppState>, auth: AuthCont
                 return;
             }
         };
+        let keyword = if keyword.trim().is_empty() {
+            source
+                .rule_search
+                .as_ref()
+                .and_then(|rule| rule.check_key_word.clone())
+                .unwrap_or_default()
+        } else {
+            keyword.clone()
+        };
+        if keyword.trim().is_empty() {
+            let _ = tx.send(Event::default().event("error").data(json_err("请输入搜索关键词"))).await;
+            let _ = tx.send(Event::default().event("end").data(json_end(0))).await;
+            return;
+        }
         let _ = tx.send(Event::default().data(json_msg("start search"))).await;
         match state_clone.book_service.search_book(&user_ns, &source, &keyword, 1).await {
             Ok(list) => {

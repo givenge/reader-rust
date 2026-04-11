@@ -8,6 +8,10 @@
 
 完整文档见：https://givenge.github.io/reader-rust/
 
+## 书源工具
+
+[ai-source-design](https://github.com/givenge/ai-source-designer) agent驱动的书源设计工具
+
 ## 使用 Docker 部署
 
 ### Linux AMD64

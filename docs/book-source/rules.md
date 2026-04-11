@@ -1,18 +1,47 @@
 # 规则语法
 
-## CSS 选择器
+## HTML / CSS 规则
 
-默认解析方式，用于从 HTML 中提取内容。
+HTML 是默认模式，通常不用显式写 `@css:`。
 
 ### 基本语法
 
 | 选择器 | 说明 |
 |--------|------|
-| `#id` | ID选择器 |
+| `#id` | ID 选择器 |
 | `.class` | 类选择器 |
 | `tag` | 标签选择器 |
 | `parent > child` | 子选择器 |
 | `[attr]` | 属性选择器 |
+| `class.mod block` | Legado 风格多 class，会转成 `.mod.block` |
+| `id.main` | 会转成 `#main` |
+| `tag.div` | 会转成 `div` |
+| `children` | 选择当前元素的直接子元素 |
+| `text.关键字` | 选择自身文本包含关键字的元素 |
+
+### 索引语法
+
+当前解析器同时支持旧式索引和 `[]` 索引：
+
+| 语法 | 说明 |
+|------|------|
+| `.list.0` | 第 1 个元素 |
+| `.list.-1` | 最后 1 个元素 |
+| `.list!0` | 排除第 1 个元素 |
+| `a[0,2,-1]` | 选择多个下标 |
+| `a[1:3]` | 选择 1 到 3，下标包含结束位 |
+| `a[-1:0]` | 倒序选择 |
+| `a[!1,2]` | 排除多个下标 |
+
+### 列表组合
+
+仅在列表规则里支持：
+
+| 语法 | 说明 |
+|------|------|
+| `rule1&&rule2` | 结果拼接 |
+| `rule1||rule2` | 前一个为空时回退到后一个 |
+| `rule1%%rule2` | 交错合并两个结果列表 |
 
 ### 内容提取
 
@@ -21,28 +50,27 @@
 | 后缀 | 说明 | 示例 |
 |------|------|------|
 | `@text` | 提取文本 | `h1@text` |
-| `@html` | 提取 HTML | `div.content@html` |
-| `@textNodes` | 提取所有文本节点 | `div@textNodes` |
-| `@attr[attr]` | 提取属性 | `a@attr[href]` |
+| `@textNodes` | 递归提取所有文本节点，按换行拼接 | `div@textNodes` |
+| `@ownText` | 只取当前元素自己的文本节点 | `div@ownText` |
+| `@html` | 提取当前元素 HTML | `div.content@html` |
+| `@all` | 当前实现等同于 `@html` | `div@all` |
+| `@href` | 直接读取属性 | `a@href` |
+| `@attr[href]` | 属性读取的兼容写法 | `a@attr[href]` |
 
 ### 链式选择
 
-用 `##` 分隔多个选择器：
+用 `@` 继续向下选择：
 
+```text
+.book-list@h3@a@href
 ```
-.book-list##h3##a@attr[href]
-```
 
-### 联合查询
+### 二次解析 `@@`
 
-用 `&&` 在列表项中提取多个字段：
+`@@` 会把前一步得到的文本重新当成 HTML 再解析：
 
-```json
-{
-  "name": "h3@text",
-  "author": ".author@text",
-  "coverUrl": "img@attr[src]"
-}
+```text
+div.script-data@html@@a@href
 ```
 
 ## JSONPath
@@ -69,6 +97,16 @@
 }
 ```
 
+字段规则里也可以直接写对象字段名：
+
+```json
+{
+  "bookList": "$.data.list",
+  "name": "title",
+  "author": "author"
+}
+```
+
 ## XPath
 
 用于 XML 或复杂的 HTML 结构。
@@ -84,70 +122,121 @@
 
 ### 显式指定
 
-```
+```text
 @xpath://div[@class='book']
 ```
 
 ## 正则表达式
 
-用于从文本中提取内容。
+当前解析器里的正则有两种主要用法。
 
-### 语法
+### 1. 作为列表规则
 
-以 `:` 开头或使用 `@regex:` 前缀：
+适用于 `bookList`、`chapterList` 这类整段文本匹配：
 
+```text
+:<a href="([^"]+)">([^<]+)</a>
+@regex:<a href="([^"]+)">([^<]+)</a>
 ```
-:@"(.*?)":  # 提取双引号中的内容
-@regex:(\d+)章  # 提取章节数字
+
+字段里再通过 `$1`、`$2` 取捕获组：
+
+```json
+{
+  "bookList": ":<a href=\"([^\"]+)\">([^<]+)</a>",
+  "bookUrl": "$1",
+  "name": "$2"
+}
 ```
 
-### 组提取
+### 2. 作为后处理替换
 
-使用捕获组，`$1` 表示第一个组：
+适用于大部分字段规则，以及 `ruleContent.sourceRegex` / `ruleContent.replaceRegex`。
 
+语法固定为：
+
+```text
+##正则##替换文本
 ```
-name:(.+?)(?:作者|【|第)  # $1 获取书名
+
+可串联多个替换：
+
+```text
+##^作者[:：]?## ##\s+## 
+```
+
+最后一个替换加 `###` 表示只替换首个匹配：
+
+```text
+##广告.*?## ###
 ```
 
 ## JavaScript
 
-用于复杂的处理逻辑。
+支持三种写法：
 
-### 基本语法
-
-以 `js:` 或 `@js:` 开头：
-
-```
-js:result.replace(/<[^>]+>/g, '')
-```
-
-### 可用变量
-
-| 变量 | 说明 |
+| 写法 | 用途 |
 |------|------|
-| `result` | 上一阶段的处理结果 |
-| `baseUrl` | 基础URL |
-| `html` | 页面 HTML 内容 |
+| `js:...` | 整条规则就是 JS |
+| `@js:...` | 在字段提取后做 JS 后处理 |
+| `<js>...</js>` | 与 `@js:` 等价 |
 
-### 完整示例
+示例：
 
 ```json
 {
-  "content": "js:result.replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')"
+  "author": ".author@text@js:input.replace(/^作者[:：]?/, '').trim()",
+  "chapterList": "js:[{ chapterName: '第一章', chapterUrl: '/1' }]"
+}
+```
+
+详细的 JS 运行时见 [JavaScript](./javascript)。
+
+## 模板与变量
+
+### `@put` / `@get`
+
+当前解析器支持在 HTML / JSON / XPath 字段中缓存临时变量：
+
+```json
+{
+  "init": "@put:{bookId:.book@data-id,bookName:h1@text}",
+  "tocUrl": "/book/@get:{bookId}/chapters",
+  "name": "@get:{bookName}"
+}
+```
+
+### `{{ ... }}`
+
+`{{ ... }}` 会执行 JS 并把结果插回规则中。
+
+在 JSON 规则中，还支持直接取当前项字段：
+
+```json
+{
+  "bookUrl": "https://example.com/book/{{id}}",
+  "coverUrl": "{{$.cover}}"
 }
 ```
 
 ## URL 参数
 
-搜索 URL 支持占位符：
+请求规则当前使用这些占位符：
 
 | 占位符 | 说明 |
 |--------|------|
-| `${key}` | 搜索关键词 |
-| `${page}` | 页码 |
-| `${baseUrl}` | 书源基础 URL |
+| `{key}` | 搜索关键词，自动 URL 编码 |
+| `{page}` | 页码 |
+| `{{...}}` | 执行 JS |
 
-示例:
+示例：
+
+```text
+/search?q={key}&page={page}
 ```
-https://example.com/search?q=${key}&page=${page}
+
+也可以在 URL 后追加请求配置 JSON：
+
+```text
+/search,{ "method": "POST", "body": "wd={key}", "headers": { "Content-Type": "application/x-www-form-urlencoded" } }
 ```

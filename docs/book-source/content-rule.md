@@ -9,7 +9,13 @@
   "ruleContent": {
     "content": "",
     "nextContentUrl": "",
-    "title": ""
+    "title": "",
+    "webJs": "",
+    "sourceRegex": "",
+    "replaceRegex": "",
+    "imageStyle": "",
+    "imageDecode": "",
+    "payAction": ""
   }
 }
 ```
@@ -18,80 +24,88 @@
 
 | 字段 | 必需 | 说明 |
 |------|------|------|
-| `content` | 是 | 正文内容选择器 |
-| `nextContentUrl` | 否 | 下一页正文链接(分页章节) |
-| `title` | 否 | 章节标题选择器 |
+| `content` | 是 | 正文规则，支持 CSS / JSONPath / XPath / JS |
+| `nextContentUrl` | 否 | 下一页正文链接，当前支持 CSS / JSONPath / XPath 直接取值 |
+| `title` | 否 | 当前模型字段存在，但正文主流程不会单独消费 |
+| `webJs` | 否 | 在 `content` 之前，对整页响应体做 JS 预处理 |
+| `sourceRegex` | 否 | 在 `content` 之前，对整页响应体做正则替换 |
+| `replaceRegex` | 否 | 在 `content` 之后，对提取结果做正则替换 |
+| `imageStyle` | 否 | 当前仅保留字段，正文主流程未执行 |
+| `imageDecode` | 否 | 当前仅保留字段，正文主流程未执行 |
+| `payAction` | 否 | 当前仅保留字段，正文主流程未执行 |
 
-## 内容清洗
+## 执行顺序
 
-正文通常需要清洗广告、脚本等多余内容：
-
-### 简单替换
-
-```json
-{
-  "content": ".content@html##<script[^>]*>[\\s\\S]*?<\\/script>##"
-}
-```
-
-### 多步替换
-
-```json
-{
-  "content": ".content@html##<p>##\\n##</p>####<script[^>]*>[\\s\\S]*?<\\/script>"
-}
-```
-
-### JavaScript 处理
-
-更复杂的清理逻辑：
-
-```json
-{
-  "content": "js:result.replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '').replace(/<br\\s*\\/?>/gi, '\\n').replace(/<\\/p>/gi, '\\n').replace(/<[^>]+>/g, '').trim()"
-}
+```text
+sourceRegex
+  ↓
+webJs
+  ↓
+content
+  ↓
+replaceRegex
 ```
 
 ## 示例
 
-### 标准正文
+### 直接提取纯文本
 
 ```json
 {
   "ruleContent": {
-    "content": ".read-content p@text##\\n##\\n##\\n##\\n",
-    "title": ".chapter-title@text"
+    "content": ".read-content@textNodes"
   }
 }
 ```
 
-### HTML 转纯文本
+### HTML 正文 + 后处理清洗
 
 ```json
 {
   "ruleContent": {
-    "content": ".content@textNodes",
-    "title": "h1@text"
+    "content": ".read-content@html",
+    "replaceRegex": "##<br\\s*\\/?>##\\n##</p>##\\n##<[^>]+>##"
+  }
+}
+```
+
+### 先清理原始页面，再提取正文
+
+```json
+{
+  "ruleContent": {
+    "sourceRegex": "##<script[\\s\\S]*?<\\/script>##",
+    "webJs": "js:input.replace(/&nbsp;/g, ' ')",
+    "content": ".read-content@textNodes",
+    "replaceRegex": "##广告推荐.*$##"
+  }
+}
+```
+
+### JS 直接返回正文
+
+```json
+{
+  "ruleContent": {
+    "content": "js:input.match(/<div class=\\\"content\\\">([\\s\\S]*?)<\\/div>/)?.[1] || ''"
   }
 }
 ```
 
 ### 分页正文
 
-如果一章分多页：
-
 ```json
 {
   "ruleContent": {
     "content": ".article-content@textNodes",
-    "nextContentUrl": ".next-page@attr[href]##@js:result && result.includes('下一页') ? result : ''"
+    "nextContentUrl": ".next-page@href"
   }
 }
 ```
 
 ## 最佳实践
 
-1. **保留换行**: 用 `\n` 替换 `<p>` 或 `<br>` 保持段落格式
-2. **去除广告**: 提前过滤脚本、推广内容
-3. **处理分页**: 如网站有分页，设置 `nextContentUrl`
-4. **标题补充**: 如果页面没有标题，可以用 `title` 规则提取
+1. 优先用 `content` 负责提取，把清洗放进 `sourceRegex` / `webJs` / `replaceRegex`
+2. `nextContentUrl` 当前不要写 `##...` 或 `@js:` 后处理，直接返回链接即可
+3. 如果站点正文本身是 JSON，直接让 `content` 走 JSONPath 更稳定
+4. `title`、`imageStyle`、`imageDecode`、`payAction` 目前还不是正文主链路的一部分

@@ -28,4 +28,6 @@ pub struct Book {
     pub toc_html: Option<String>,
     pub kind: Option<String>,
     pub update_time: Option<String>,
+    pub can_re_name: Option<String>,
+    pub download_urls: Option<String>,
 }

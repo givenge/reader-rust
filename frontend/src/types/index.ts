@@ -46,11 +46,14 @@ export interface SearchBook {
   author: string
   bookUrl: string
   origin: string
+  originName?: string
+  originGroup?: string
   coverUrl?: string
   intro?: string
   kind?: string
   lastChapter?: string
   updateTime?: string
+  wordCount?: string
   bookSourceUrls?: string[]
 }
 

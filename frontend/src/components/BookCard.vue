@@ -52,11 +52,15 @@
         <span v-if="asBook.totalChapterNum" class="meta-dot">·</span>
         <span v-if="asBook.totalChapterNum" class="book-chapters">共{{ asBook.totalChapterNum }}章</span>
       </div>
+      <div v-if="isSearch && (sourceName || sourceGroup)" class="book-source-row">
+        <span v-if="sourceName" class="source-chip source-name">{{ sourceName }}</span>
+        <span v-if="sourceGroup" class="source-chip source-group">{{ sourceGroup }}</span>
+      </div>
       <p v-if="asBook.durChapterTitle && !isSearch" class="book-progress">
         已读：{{ asBook.durChapterTitle }}
       </p>
-      <p v-if="asBook.latestChapterTitle" class="book-latest">
-        最新：{{ asBook.latestChapterTitle }}
+      <p v-if="latestChapterText" class="book-latest">
+        最新：{{ latestChapterText }}
       </p>
       <div v-if="!isSearch && (browserCachedCount > 0 || serverCachedCount > 0)" class="book-cache-row">
         <span v-if="browserCachedCount > 0" class="cache-chip primary">离线 {{ browserCachedCount }} 章</span>
@@ -118,6 +122,7 @@ function handleCoverClick() {
 const coverFailed = ref(false)
 
 const asBook = computed(() => props.book as Book)
+const asSearchBook = computed(() => props.book as SearchBook)
 
 const coverSrc = computed(() => {
   if (coverFailed.value) return ''
@@ -134,6 +139,20 @@ const unreadCount = computed(() => {
 
 const browserCachedCount = computed(() => Math.max(0, asBook.value.browserCachedChapterCount || 0))
 const serverCachedCount = computed(() => Math.max(0, asBook.value.cachedChapterCount || 0))
+const latestChapterText = computed(() => {
+  if (props.isSearch) {
+    return asSearchBook.value.lastChapter || asBook.value.latestChapterTitle || ''
+  }
+  return asBook.value.latestChapterTitle || ''
+})
+const sourceName = computed(() => {
+  if (!props.isSearch) return ''
+  return asSearchBook.value.originName || props.book.origin || ''
+})
+const sourceGroup = computed(() => {
+  if (!props.isSearch) return ''
+  return asSearchBook.value.originGroup || ''
+})
 </script>
 
 <style scoped>
@@ -373,6 +392,36 @@ const serverCachedCount = computed(() => Math.max(0, asBook.value.cachedChapterC
 .book-latest {
   color: var(--color-text-tertiary);
   min-height: 18px;
+}
+
+.book-source-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 24px;
+}
+
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.source-name {
+  background: rgba(201, 127, 58, 0.12);
+  color: var(--color-primary);
+}
+
+.source-group {
+  background: rgba(0, 0, 0, 0.05);
+  color: var(--color-text-secondary);
 }
 
 .book-cache-row {

@@ -2,7 +2,7 @@ use crate::crawler::{http_client::HttpClient, fetcher::{RequestSpec, HttpMethod,
 use crate::error::error::AppError;
 use crate::model::{book::Book, book_chapter::BookChapter, book_source::BookSource, search::SearchBook};
 use crate::parser::rule_engine::RuleEngine;
-use crate::parser::js::{eval_js, eval_js_search_with_source};
+use crate::parser::js::{eval_js, eval_js_search_with_source, with_js_lib};
 use crate::storage::cache::file_cache::FileCache;
 use tokio::fs;
 use std::path::PathBuf;
@@ -85,7 +85,7 @@ impl BookService {
     pub async fn search_book(&self, user_ns: &str, source: &BookSource, key: &str, page: i32) -> Result<Vec<SearchBook>, AppError> {
         let search_url = source.search_url.clone().ok_or_else(|| AppError::BadRequest("missing search_url".to_string()))?;
         tracing::info!("searching book from {}: key={}, page={}, url={}", source.book_source_name, key, page, search_url);
-        let mut spec = analyze_url(&search_url, key, page, &source.book_source_url).map_err(|e| {
+        let mut spec = analyze_url(&search_url, key, page, &source.book_source_url, source.js_lib.as_deref()).map_err(|e| {
             tracing::error!("analyze_url failed: {:?}", e);
             e
         })?;
@@ -115,7 +115,7 @@ impl BookService {
         if rule_find_url.trim().is_empty() {
             return Err(AppError::BadRequest("ruleFindUrl required".to_string()));
         }
-        let mut spec = analyze_url(rule_find_url, "", page, &source.book_source_url)?;
+        let mut spec = analyze_url(rule_find_url, "", page, &source.book_source_url, source.js_lib.as_deref())?;
 
         if let Some(header_str) = &source.header {
             if let Ok(headers) = serde_json::from_str::<std::collections::HashMap<String, String>>(header_str) {
@@ -137,7 +137,7 @@ impl BookService {
             .filter(|v| !v.trim().is_empty())
             .ok_or_else(|| AppError::BadRequest("missing loginUrl".to_string()))?;
 
-        let mut spec = analyze_url(&login_url, "", 1, &source.book_source_url)?;
+        let mut spec = analyze_url(&login_url, "", 1, &source.book_source_url, source.js_lib.as_deref())?;
         if let Some(header_str) = &source.header {
             if let Ok(headers) = serde_json::from_str::<std::collections::HashMap<String, String>>(header_str) {
                 for (k, v) in headers {
@@ -148,7 +148,9 @@ impl BookService {
 
         let res = fetch(&self.http, spec).await?;
         let check_result = if let Some(login_check_js) = source.login_check_js.as_deref().filter(|s| !s.trim().is_empty()) {
-            Some(eval_js(login_check_js, &res.body, &res.url).unwrap_or_default())
+            Some(with_js_lib(source.js_lib.as_deref(), || {
+                eval_js(login_check_js, &res.body, &res.url).unwrap_or_default()
+            }))
         } else {
             None
         };
@@ -282,6 +284,7 @@ impl BookService {
                         title: ch.title,
                         url: ch.url,
                         index: chapter_index,
+                        ..Default::default()
                     });
                     chapter_index += 1;
                 }
@@ -315,6 +318,7 @@ impl BookService {
                         title: ch.title,
                         url: ch.url,
                         index: chapter_index,
+                        ..Default::default()
                     });
                     chapter_index += 1;
                 }
@@ -353,6 +357,7 @@ impl BookService {
                 title: ch.title,
                 url: ch.url,
                 index: chapter_index,
+                ..Default::default()
             });
             chapter_index += 1;
         }
@@ -381,6 +386,7 @@ impl BookService {
                         title: ch.title,
                         url: ch.url,
                         index: chapter_index,
+                        ..Default::default()
                     });
                     chapter_index += 1;
                 }
@@ -404,6 +410,7 @@ impl BookService {
                         title: ch.title,
                         url: ch.url,
                         index: chapter_index,
+                        ..Default::default()
                     });
                     chapter_index += 1;
                 }
@@ -960,71 +967,69 @@ fn content_type_from_ext(ext: &str) -> String {
     .to_string()
 }
 
-fn analyze_url(m_url: &str, key: &str, page: i32, base_url: &str) -> Result<RequestSpec, AppError> {
-    tracing::debug!("analyzing url: {}", m_url);
-    let mut rule_url = m_url.to_string();
-    let base_url = normalize_source_url(base_url);
+fn analyze_url(m_url: &str, key: &str, page: i32, base_url: &str, js_lib: Option<&str>) -> Result<RequestSpec, AppError> {
+    with_js_lib(js_lib, || {
+        tracing::debug!("analyzing url: {}", m_url);
+        let mut rule_url = m_url.to_string();
+        let base_url = normalize_source_url(base_url);
 
-    // 1. Evaluate {{js}} blocks
-    while let Some(start) = rule_url.find("{{") {
-        if let Some(end) = rule_url[start..].find("}}") {
-            let script = &rule_url[start + 2..start + end];
-            tracing::debug!("evaluating search js: {}", script);
-            let res = eval_js_search_with_source(script, key, page, &base_url).map_err(|e| {
-                tracing::error!("js eval failed for search url: {:?}, script: {}", e, script);
-                AppError::Internal(e)
-            })?;
-            rule_url.replace_range(start..start + end + 2, &res);
-        } else {
-            break;
+        while let Some(start) = rule_url.find("{{") {
+            if let Some(end) = rule_url[start..].find("}}") {
+                let script = &rule_url[start + 2..start + end];
+                tracing::debug!("evaluating search js: {}", script);
+                let res = eval_js_search_with_source(script, key, page, &base_url).map_err(|e| {
+                    tracing::error!("js eval failed for search url: {:?}, script: {}", e, script);
+                    AppError::Internal(e)
+                })?;
+                rule_url.replace_range(start..start + end + 2, &res);
+            } else {
+                break;
+            }
         }
-    }
 
-    // 2. Simple replacements for compatibility
-    let key_enc = encode(key);
-    rule_url = rule_url.replace("{key}", &key_enc)
-                       .replace("{page}", &page.to_string());
+        let key_enc = encode(key);
+        rule_url = rule_url.replace("{key}", &key_enc)
+                           .replace("{page}", &page.to_string());
 
-    // 3. Split comma options
-    // Legacy legato format: url , { "method": "POST", "body": "..." }
-    let parts: Vec<&str> = rule_url.splitn(2, ',').collect();
-    let mut url = parts[0].trim().to_string();
-    if !url.starts_with("http") {
-        url = resolve_url(&base_url, &url);
-    }
+        let parts: Vec<&str> = rule_url.splitn(2, ',').collect();
+        let mut url = parts[0].trim().to_string();
+        if !url.starts_with("http") {
+            url = resolve_url(&base_url, &url);
+        }
 
-    let mut method = HttpMethod::GET;
-    let mut headers = Vec::new();
-    let mut body = None;
+        let mut method = HttpMethod::GET;
+        let mut headers = Vec::new();
+        let mut body = None;
 
-    if parts.len() > 1 {
-        let options_str = parts[1].trim();
-        if options_str.starts_with('{') {
-            if let Ok(options) = serde_json::from_str::<serde_json::Value>(options_str) {
-                if let Some(m) = options.get("method").and_then(|v| v.as_str()) {
-                    if m.to_uppercase() == "POST" {
-                        method = HttpMethod::POST;
+        if parts.len() > 1 {
+            let options_str = parts[1].trim();
+            if options_str.starts_with('{') {
+                if let Ok(options) = serde_json::from_str::<serde_json::Value>(options_str) {
+                    if let Some(m) = options.get("method").and_then(|v| v.as_str()) {
+                        if m.to_uppercase() == "POST" {
+                            method = HttpMethod::POST;
+                        }
                     }
-                }
-                if let Some(b) = options.get("body").and_then(|v| v.as_str()) {
-                    body = Some(b.to_string());
-                }
-                if let Some(h) = options.get("headers").and_then(|v| v.as_object()) {
-                    for (k, v) in h {
-                        if let Some(vs) = v.as_str() {
-                            headers.push((k.clone(), vs.to_string()));
+                    if let Some(b) = options.get("body").and_then(|v| v.as_str()) {
+                        body = Some(b.to_string());
+                    }
+                    if let Some(h) = options.get("headers").and_then(|v| v.as_object()) {
+                        for (k, v) in h {
+                            if let Some(vs) = v.as_str() {
+                                headers.push((k.clone(), vs.to_string()));
+                            }
                         }
                     }
                 }
             }
         }
-    }
 
-    Ok(RequestSpec {
-        url,
-        method,
-        headers,
-        body,
+        Ok(RequestSpec {
+            url,
+            method,
+            headers,
+            body,
+        })
     })
 }
 

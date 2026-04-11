@@ -1,18 +1,21 @@
 # 搜索规则 (ruleSearch)
 
-定义如何从搜索结果页提取书籍列表。
+定义如何从搜索结果页提取书籍列表。`ruleExplore` 结构与它相同。
 
 ## 规则字段
 
 ```json
 {
   "ruleSearch": {
+    "checkKeyWord": "",
     "bookList": "",
     "name": "",
     "author": "",
-    "kind": "",
-    "wordCount": "",
     "intro": "",
+    "kind": "",
+    "lastChapter": "",
+    "updateTime": "",
+    "wordCount": "",
     "coverUrl": "",
     "bookUrl": ""
   }
@@ -23,15 +26,17 @@
 
 | 字段 | 必需 | 说明 |
 |------|------|------|
-| `bookList` | 是 | 书籍列表的选择器 |
+| `checkKeyWord` | 否 | 当前主要用于调试接口默认关键词，不参与搜索结果校验 |
+| `bookList` | 是 | 书籍列表规则，支持 CSS / JSONPath / XPath / Regex / JS |
 | `name` | 是 | 书名选择器 |
 | `author` | 否 | 作者选择器 |
-| `bookUrl` | 是 | 书籍详情页链接 |
-| `coverUrl` | 否 | 封面图片URL |
 | `intro` | 否 | 简介 |
 | `kind` | 否 | 分类/标签 |
-| `wordCount` | 否 | 总字数 |
 | `lastChapter` | 否 | 最新章节 |
+| `updateTime` | 否 | 更新时间 |
+| `wordCount` | 否 | 总字数 |
+| `bookUrl` | 是 | 书籍详情页链接 |
+| `coverUrl` | 否 | 封面图片 URL |
 
 ## 示例
 
@@ -39,15 +44,17 @@
 
 ```json
 {
+  "searchUrl": "/search?wd={key}&page={page}",
   "ruleSearch": {
     "bookList": ".search-list li",
     "name": "h3 a@text",
-    "author": ".author@text##作者：",
-    "bookUrl": "h3 a@attr[href]",
-    "coverUrl": "img@attr[src]",
+    "author": ".author@text##^作者[:：]?##",
+    "bookUrl": "h3 a@href",
+    "coverUrl": "img@src",
     "intro": ".intro@text",
-    "wordCount": ".words@text##万字",
-    "lastChapter": ".latest@text"
+    "wordCount": ".words@text",
+    "lastChapter": ".latest@text",
+    "updateTime": ".updated@text"
   }
 }
 ```
@@ -56,42 +63,48 @@
 
 ```json
 {
-  "searchUrl": "https://api.example.com/search?q=${key}&page=${page}",
+  "searchUrl": "https://api.example.com/search?q={key}&page={page}",
   "ruleSearch": {
-    "bookList": "@json:$.data.books",
-    "name": "@json:$.title",
-    "author": "@json:$.author",
-    "bookUrl": "@json:$.book_id##https://example.com/book/${id}",
-    "coverUrl": "@json:$.cover"
+    "bookList": "$.data.books",
+    "name": "title",
+    "author": "author",
+    "bookUrl": "https://example.com/book/{{id}}",
+    "coverUrl": "cover",
+    "lastChapter": "latestChapter"
   }
 }
 ```
 
-## 高级技巧
-
-### 数据清洗
-
-用 `##` 移除不需要的文本：
-
-```
-.author@text##作者：  # 移除"作者："前缀
-```
-
-### URL 补全
-
-相对路径自动补全，也可手动拼接：
-
-```
-bookUrl@attr[href]##${baseUrl}  # 基础URL + 相对路径
-```
-
-### 列表为空处理
-
-如果一页只有一本书，`bookList` 可以省略：
+### 正则列表示例
 
 ```json
 {
-  "name": "h1.title@text",
-  "author": ".info .author@text"
+  "ruleSearch": {
+    "bookList": ":<a href=\"([^\"]+)\">([^<]+)</a>",
+    "bookUrl": "$1",
+    "name": "$2"
+  }
 }
 ```
+
+### JS 列表示例
+
+```json
+{
+  "ruleSearch": {
+    "bookList": "js:[{ name: '演示书', author: '作者', bookUrl: '/book/1' }]",
+    "name": "name",
+    "author": "author",
+    "bookUrl": "bookUrl"
+  }
+}
+```
+
+## 当前实现说明
+
+- `bookList` 支持前缀 `-` 和 `+`
+- `-bookListRule`：结果反转
+- `+bookListRule`：显式保持原顺序
+- `bookUrl`、`coverUrl` 返回相对路径时会自动补全为绝对 URL
+- HTML 搜索当前仍建议把 `bookList` 视为必填
+- 如果搜索结果为空、且未配置 `bookUrlPattern`，当前实现会尝试把当前页面按 `ruleBookInfo` 当作详情页回退解析

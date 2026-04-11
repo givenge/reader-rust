@@ -1,6 +1,33 @@
 use scraper::{Html, Selector, ElementRef};
 use std::collections::HashSet;
 
+#[derive(Clone, Debug, PartialEq)]
+enum SelectorBase {
+    Css(String),
+    Children,
+    Text(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum IndexMode {
+    Select,
+    Exclude,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum IndexItem {
+    Single(i32),
+    Range { start: Option<i32>, end: Option<i32>, step: i32 },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ParsedSelector {
+    base: SelectorBase,
+    explicit_index: bool,
+    index_mode: IndexMode,
+    index_items: Vec<IndexItem>,
+}
+
 pub fn parse_document(html: &str) -> Html {
     Html::parse_document(html)
 }
@@ -57,42 +84,305 @@ fn legado_to_css(selector: &str) -> String {
     selector.to_string()
 }
 
-/// Parse index shortcuts from selector
-/// Supports:
-/// - .class.0 → first element
-/// - .class.-1 → last element
-/// - .class!0 → exclude first element
-fn parse_selector_with_index(s: &str) -> (String, Vec<i32>, Option<Vec<i32>>) {
-    let converted = legado_to_css(s);
+fn parse_selector_with_index(selector: &str) -> ParsedSelector {
+    let selector = selector.trim();
 
-    // Check for exclusion syntax (!)
-    if let Some(pos) = converted.rfind('!') {
-        let before = &converted[..pos];
-        let after = &converted[pos + 1..];
-        if let Ok(idx) = after.parse::<i32>() {
-            return (before.to_string(), vec![0], Some(vec![idx]));
-        }
+    if let Some((base, index_mode, index_items)) = parse_bracket_index_spec(selector) {
+        return ParsedSelector {
+            base: parse_selector_base(base),
+            explicit_index: true,
+            index_mode,
+            index_items,
+        };
     }
 
-    // Check for range syntax (start:end)
-    if let Some(pos) = converted.rfind('.') {
-        let last_part = &converted[pos + 1..];
+    if let Some((base, index_mode, index_items)) = parse_legacy_index_spec(selector) {
+        return ParsedSelector {
+            base: parse_selector_base(base),
+            explicit_index: true,
+            index_mode,
+            index_items,
+        };
+    }
 
-        if last_part.contains(':') {
-            let parts: Vec<&str> = last_part.split(':').collect();
-            if parts.len() >= 2 {
-                let start: i32 = parts[0].parse().unwrap_or(0);
-                let end: i32 = parts[1].parse().unwrap_or(-1);
-                return (converted[..pos].to_string(), vec![start, end], None);
+    ParsedSelector {
+        base: parse_selector_base(selector),
+        explicit_index: false,
+        index_mode: IndexMode::Select,
+        index_items: Vec::new(),
+    }
+}
+
+fn parse_selector_base(selector: &str) -> SelectorBase {
+    let selector = selector.trim();
+    if selector.is_empty() || selector == "children" {
+        return SelectorBase::Children;
+    }
+    if let Some(text) = selector.strip_prefix("text.") {
+        return SelectorBase::Text(text.trim().to_string());
+    }
+    SelectorBase::Css(legado_to_css(selector))
+}
+
+fn parse_bracket_index_spec(selector: &str) -> Option<(&str, IndexMode, Vec<IndexItem>)> {
+    let selector = selector.trim();
+    if !selector.ends_with(']') {
+        return None;
+    }
+    let start = selector.rfind('[')?;
+    let base = selector[..start].trim();
+    let mut inner = selector[start + 1..selector.len() - 1].trim();
+    let index_mode = if let Some(rest) = inner.strip_prefix('!') {
+        inner = rest.trim();
+        IndexMode::Exclude
+    } else {
+        IndexMode::Select
+    };
+
+    let mut items = Vec::new();
+    if !inner.is_empty() {
+        for part in inner.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            if let Some(item) = parse_bracket_index_item(part) {
+                items.push(item);
+            } else {
+                return None;
             }
         }
+    }
 
-        if let Ok(idx) = last_part.parse::<i32>() {
-            return (converted[..pos].to_string(), vec![idx], None);
+    Some((base, index_mode, items))
+}
+
+fn parse_bracket_index_item(part: &str) -> Option<IndexItem> {
+    if part.contains(':') {
+        let segments: Vec<&str> = part.split(':').collect();
+        if segments.len() < 2 || segments.len() > 3 {
+            return None;
+        }
+        let start = parse_optional_i32(segments[0])?;
+        let end = parse_optional_i32(segments[1])?;
+        let step = match segments.get(2) {
+            Some(value) => parse_optional_i32(value)?.unwrap_or(1),
+            None => 1,
+        };
+        return Some(IndexItem::Range { start, end, step });
+    }
+
+    Some(IndexItem::Single(part.parse().ok()?))
+}
+
+fn parse_optional_i32(part: &str) -> Option<Option<i32>> {
+    let part = part.trim();
+    if part.is_empty() {
+        return Some(None);
+    }
+    Some(Some(part.parse().ok()?))
+}
+
+fn parse_legacy_index_spec(selector: &str) -> Option<(&str, IndexMode, Vec<IndexItem>)> {
+    for (delimiter, index_mode) in [('!', IndexMode::Exclude), ('.', IndexMode::Select)] {
+        let Some(pos) = selector.rfind(delimiter) else {
+            continue;
+        };
+        let base = selector[..pos].trim();
+        let tail = selector[pos + 1..].trim();
+        if tail.is_empty() {
+            continue;
+        }
+
+        let mut items = Vec::new();
+        for part in tail.split(':') {
+            let part = part.trim();
+            if part.is_empty() {
+                return None;
+            }
+            items.push(IndexItem::Single(part.parse().ok()?));
+        }
+        return Some((base, index_mode, items));
+    }
+    None
+}
+
+fn collect_matches<'a>(doc: &'a Html, selector: &ParsedSelector) -> Vec<ElementRef<'a>> {
+    let matches = match &selector.base {
+        SelectorBase::Css(css_selector) => select_css(doc, css_selector),
+        SelectorBase::Children => Vec::new(),
+        SelectorBase::Text(text) => select_by_text_doc(doc, text),
+    };
+    apply_indices(matches, selector)
+}
+
+fn collect_matches_from_element<'a>(el: ElementRef<'a>, selector: &ParsedSelector) -> Vec<ElementRef<'a>> {
+    let matches = match &selector.base {
+        SelectorBase::Css(css_selector) => select_css_from_element(el, css_selector),
+        SelectorBase::Children => child_elements(el),
+        SelectorBase::Text(text) => select_by_text_from_element(el, text),
+    };
+    apply_indices(matches, selector)
+}
+
+fn select_css<'a>(doc: &'a Html, css_selector: &str) -> Vec<ElementRef<'a>> {
+    let sel = match Selector::parse(css_selector) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    doc.select(&sel).collect()
+}
+
+fn select_css_from_element<'a>(el: ElementRef<'a>, css_selector: &str) -> Vec<ElementRef<'a>> {
+    let sel = match Selector::parse(css_selector) {
+        Ok(s) => s,
+        Err(_) => return vec![],
+    };
+    el.select(&sel).collect()
+}
+
+fn child_elements<'a>(el: ElementRef<'a>) -> Vec<ElementRef<'a>> {
+    el.children().filter_map(ElementRef::wrap).collect()
+}
+
+fn select_by_text_doc<'a>(doc: &'a Html, needle: &str) -> Vec<ElementRef<'a>> {
+    let sel = Selector::parse("*").unwrap();
+    doc.select(&sel)
+        .filter(|el| own_text(el).contains(needle))
+        .collect()
+}
+
+fn select_by_text_from_element<'a>(el: ElementRef<'a>, needle: &str) -> Vec<ElementRef<'a>> {
+    let mut matches = Vec::new();
+    if own_text(&el).contains(needle) {
+        matches.push(el);
+    }
+    if let Ok(sel) = Selector::parse("*") {
+        matches.extend(el.select(&sel).filter(|candidate| own_text(candidate).contains(needle)));
+    }
+    matches
+}
+
+fn own_text(el: &ElementRef) -> String {
+    let mut text = String::new();
+    for node in el.children() {
+        if let Some(text_node) = node.value().as_text() {
+            text.push_str(text_node.text.trim());
+        }
+    }
+    text
+}
+
+fn apply_indices<'a>(matches: Vec<ElementRef<'a>>, selector: &ParsedSelector) -> Vec<ElementRef<'a>> {
+    if !selector.explicit_index {
+        return matches;
+    }
+
+    let resolved = resolve_indices(matches.len(), &selector.index_items);
+    if selector.index_mode == IndexMode::Exclude {
+        let exclude_set: HashSet<usize> = resolved.into_iter().collect();
+        return matches
+            .into_iter()
+            .enumerate()
+            .filter(|(idx, _)| !exclude_set.contains(idx))
+            .map(|(_, el)| el)
+            .collect();
+    }
+
+    resolved
+        .into_iter()
+        .filter_map(|idx| matches.get(idx).copied())
+        .collect()
+}
+
+fn resolve_indices(len: usize, items: &[IndexItem]) -> Vec<usize> {
+    if len == 0 {
+        return Vec::new();
+    }
+
+    let mut seen = HashSet::new();
+    let mut resolved = Vec::new();
+    for item in items {
+        for idx in expand_index_item(len, item) {
+            if seen.insert(idx) {
+                resolved.push(idx);
+            }
+        }
+    }
+    resolved
+}
+
+fn expand_index_item(len: usize, item: &IndexItem) -> Vec<usize> {
+    match item {
+        IndexItem::Single(idx) => normalize_index(*idx, len).into_iter().collect(),
+        IndexItem::Range { start, end, step } => expand_range(len, *start, *end, *step),
+    }
+}
+
+fn normalize_index(index: i32, len: usize) -> Option<usize> {
+    let len_i32 = len as i32;
+    let resolved = if index < 0 { len_i32 + index } else { index };
+    if resolved < 0 || resolved >= len_i32 {
+        return None;
+    }
+    Some(resolved as usize)
+}
+
+fn expand_range(len: usize, start: Option<i32>, end: Option<i32>, step: i32) -> Vec<usize> {
+    if len == 0 {
+        return Vec::new();
+    }
+
+    let len_i32 = len as i32;
+    let mut start = start.unwrap_or(0);
+    let mut end = end.unwrap_or(len_i32 - 1);
+
+    if start < 0 {
+        start += len_i32;
+    }
+    if end < 0 {
+        end += len_i32;
+    }
+
+    if (start < 0 && end < 0) || (start >= len_i32 && end >= len_i32) {
+        return Vec::new();
+    }
+
+    start = start.clamp(0, len_i32 - 1);
+    end = end.clamp(0, len_i32 - 1);
+
+    let step = if step > 0 {
+        step as usize
+    } else if -step < len_i32 {
+        (step + len_i32).max(1) as usize
+    } else {
+        1
+    };
+
+    let mut indices = Vec::new();
+    if start <= end {
+        let mut current = start as usize;
+        let end = end as usize;
+        while current <= end {
+            indices.push(current);
+            current = match current.checked_add(step) {
+                Some(next) => next,
+                None => break,
+            };
+        }
+    } else {
+        let mut current = start as usize;
+        let end = end as usize;
+        loop {
+            indices.push(current);
+            if current <= end || current < step {
+                break;
+            }
+            current -= step;
         }
     }
 
-    (converted, vec![0], None)
+    indices
 }
 
 /// Select elements with Legado rule syntax
@@ -108,54 +398,7 @@ pub fn select_list<'a>(doc: &'a Html, selector: &str) -> Vec<ElementRef<'a>> {
         return select_with_combination(doc, sel_text);
     }
 
-    let (css_selector, indices, exclude) = parse_selector_with_index(sel_text);
-
-    let sel = match Selector::parse(&css_selector) {
-        Ok(s) => s,
-        Err(_) => return vec![],
-    };
-
-    let matches: Vec<ElementRef<'a>> = doc.select(&sel).collect();
-
-    if matches.is_empty() {
-        return vec![];
-    }
-
-    // Handle exclusion
-    if let Some(exclude_indices) = exclude {
-        let exclude_set: HashSet<i32> = exclude_indices.into_iter().collect();
-        return matches.into_iter().enumerate()
-            .filter(|(i, _)| !exclude_set.contains(&(*i as i32)))
-            .map(|(_, el)| el)
-            .collect();
-    }
-
-    // Handle range selection (start:end)
-    if indices.len() == 2 {
-        let start = indices[0] as usize;
-        let end = if indices[1] < 0 { matches.len() } else { indices[1] as usize + 1 };
-        return matches.into_iter().skip(start).take(end.saturating_sub(start)).collect();
-    }
-
-    // Single index (0 means all)
-    let index = indices.get(0).copied().unwrap_or(0);
-    if index == 0 {
-        return matches;
-    }
-
-    let idx = if index < 0 {
-        let n = matches.len() as i32 + index;
-        if n < 0 { return vec![]; }
-        n as usize
-    } else {
-        index as usize
-    };
-
-    if idx < matches.len() {
-        vec![matches[idx]]
-    } else {
-        vec![]
-    }
+    collect_matches(doc, &parse_selector_with_index(sel_text))
 }
 
 /// Handle list combination operators
@@ -229,51 +472,7 @@ fn select_with_combination<'a>(doc: &'a Html, rule: &str) -> Vec<ElementRef<'a>>
 
 /// Simple select without combination operators
 fn select_list_simple<'a>(doc: &'a Html, selector: &str) -> Vec<ElementRef<'a>> {
-    let (css_selector, indices, exclude) = parse_selector_with_index(selector);
-
-    let sel = match Selector::parse(&css_selector) {
-        Ok(s) => s,
-        Err(_) => return vec![],
-    };
-
-    let matches: Vec<ElementRef<'a>> = doc.select(&sel).collect();
-
-    if matches.is_empty() {
-        return vec![];
-    }
-
-    if let Some(exclude_indices) = exclude {
-        let exclude_set: HashSet<i32> = exclude_indices.into_iter().collect();
-        return matches.into_iter().enumerate()
-            .filter(|(i, _)| !exclude_set.contains(&(*i as i32)))
-            .map(|(_, el)| el)
-            .collect();
-    }
-
-    if indices.len() == 2 {
-        let start = indices[0] as usize;
-        let end = if indices[1] < 0 { matches.len() } else { indices[1] as usize + 1 };
-        return matches.into_iter().skip(start).take(end.saturating_sub(start)).collect();
-    }
-
-    let index = indices.get(0).copied().unwrap_or(0);
-    if index == 0 {
-        return matches;
-    }
-
-    let idx = if index < 0 {
-        let n = matches.len() as i32 + index;
-        if n < 0 { return vec![]; }
-        n as usize
-    } else {
-        index as usize
-    };
-
-    if idx < matches.len() {
-        vec![matches[idx]]
-    } else {
-        vec![]
-    }
+    collect_matches(doc, &parse_selector_with_index(selector))
 }
 
 /// Extract text from element with various Legado extractors
@@ -308,6 +507,10 @@ pub fn extract_text(el: &ElementRef, extractor: &str) -> Option<String> {
             Some(el.html())
         }
         _ => {
+            if let Some(attr_name) = parse_attr_extractor(extractor) {
+                return el.value().attr(attr_name).map(|v| v.to_string());
+            }
+
             if extractor.starts_with('@') {
                 el.value().attr(&extractor[1..]).map(|v| v.to_string())
             } else {
@@ -315,6 +518,15 @@ pub fn extract_text(el: &ElementRef, extractor: &str) -> Option<String> {
             }
         }
     }
+}
+
+fn parse_attr_extractor(extractor: &str) -> Option<&str> {
+    let extractor = extractor.trim();
+    let extractor = extractor.strip_prefix('@').unwrap_or(extractor);
+    extractor
+        .strip_prefix("attr[")
+        .and_then(|s| s.strip_suffix(']'))
+        .filter(|s| !s.is_empty())
 }
 
 /// Get all text nodes from an element, preserving structure
@@ -340,65 +552,29 @@ fn collect_text_nodes(el: ElementRef, texts: &mut Vec<String>) {
 
 pub fn select_text_from_element(el: &ElementRef, rule: &str) -> Option<String> {
     let parts: Vec<&str> = rule.split('@').collect();
-    let mut current_el = el.clone();
+    let mut current_matches = vec![*el];
 
     for i in 0..parts.len() {
         let part = parts[i].trim();
         if part.is_empty() { continue; }
 
         if i == parts.len() - 1 {
-            return extract_text(&current_el, part);
+            return current_matches.into_iter().find_map(|current| extract_text(&current, part));
         }
 
-        let (css_selector, indices, exclude) = parse_selector_with_index(part);
-        let sel = match Selector::parse(&css_selector) {
-            Ok(s) => s,
-            Err(_) => return None,
-        };
-
-        let matches: Vec<_> = current_el.select(&sel).collect();
-        if matches.is_empty() { return None; }
-
-        if let Some(exclude_indices) = exclude {
-            let exclude_set: HashSet<i32> = exclude_indices.into_iter().collect();
-            let filtered: Vec<_> = matches.into_iter().enumerate()
-                .filter(|(j, _)| !exclude_set.contains(&(*j as i32)))
-                .map(|(_, e)| e)
-                .collect();
-            if filtered.is_empty() { return None; }
-            current_el = filtered.into_iter().next()?;
-            continue;
+        let parsed = parse_selector_with_index(part);
+        let current_level = current_matches;
+        let mut next_matches = Vec::new();
+        for current in current_level {
+            next_matches.extend(collect_matches_from_element(current, &parsed));
         }
-
-        if indices.len() == 2 {
-            let start = indices[0] as usize;
-            let end = if indices[1] < 0 { matches.len() } else { indices[1] as usize + 1 };
-            if start >= end || start >= matches.len() { return None; }
-            current_el = matches[start];
-            continue;
+        if next_matches.is_empty() {
+            return None;
         }
-
-        let index = indices.get(0).copied().unwrap_or(0);
-        if index == 0 && matches.len() == 1 {
-            current_el = matches.into_iter().next().unwrap();
-        } else {
-            let idx = if index < 0 {
-                let n = matches.len() as i32 + index;
-                if n < 0 { return None; }
-                n as usize
-            } else {
-                index as usize
-            };
-
-            if idx < matches.len() {
-                current_el = matches[idx];
-            } else {
-                return None;
-            }
-        }
+        current_matches = next_matches;
     }
 
-    extract_text(&current_el, "text")
+    current_matches.into_iter().find_map(|current| extract_text(&current, "text"))
 }
 
 /// Select all matching elements and collect their text, joined by newlines
@@ -407,33 +583,8 @@ pub fn select_all_text(doc: &Html, rule: &str) -> Option<String> {
     if parts.is_empty() { return None; }
 
     let first_part = parts[0].trim();
-    let (css_selector, indices, exclude) = parse_selector_with_index(first_part);
-
-    let sel = match Selector::parse(&css_selector) {
-        Ok(s) => s,
-        Err(_) => return None,
-    };
-
-    let roots: Vec<_> = doc.select(&sel).collect();
+    let roots = collect_matches(doc, &parse_selector_with_index(first_part));
     if roots.is_empty() { return None; }
-
-    let roots: Vec<_> = if let Some(exclude_indices) = exclude {
-        let exclude_set: HashSet<i32> = exclude_indices.into_iter().collect();
-        roots.into_iter().enumerate()
-            .filter(|(i, _)| !exclude_set.contains(&(*i as i32)))
-            .map(|(_, el)| el)
-            .collect()
-    } else {
-        roots
-    };
-
-    let roots: Vec<_> = if indices.len() == 2 {
-        let start = indices[0] as usize;
-        let end = if indices[1] < 0 { roots.len() } else { indices[1] as usize + 1 };
-        roots.into_iter().skip(start).take(end.saturating_sub(start)).collect()
-    } else {
-        roots
-    };
 
     if parts.len() > 1 {
         let mut all_texts = Vec::new();
@@ -448,16 +599,14 @@ pub fn select_all_text(doc: &Html, rule: &str) -> Option<String> {
                 continue;
             }
 
-            let (sub_css, _, _) = parse_selector_with_index(sub_rule.trim());
-            if let Ok(sub_sel) = Selector::parse(&sub_css) {
-                for el in root.select(&sub_sel) {
+            let parsed = parse_selector_with_index(sub_rule.trim());
+            for el in collect_matches_from_element(root, &parsed) {
                     if let Some(text) = extract_text(&el, "text") {
                         if !text.is_empty() {
                             all_texts.push(text);
                         }
                     }
-                }
-            };
+            }
         }
 
         if all_texts.is_empty() { return None; }
@@ -512,82 +661,8 @@ pub fn select_text_list(doc: &Html, rule: &str) -> Vec<String> {
 
     let first_part = parts[0].trim();
 
-    // Handle Legado's text.XXX selector format
-    if first_part.starts_with("text.") {
-        let text_content = &first_part[5..];
-        let mut results = Vec::new();
-        if let Ok(sel) = Selector::parse("a") {
-            for el in doc.select(&sel) {
-                let el_text = el.text().collect::<Vec<_>>().join("").trim().to_string();
-                if el_text.contains(text_content) {
-                    if parts.len() > 1 {
-                        let attr = parts[1].trim();
-                        if let Some(v) = extract_text(&el, attr) {
-                            results.push(v);
-                        }
-                    } else {
-                        results.push(el_text);
-                    }
-                }
-            }
-        }
-        return results;
-    }
-
-    let (css_selector, indices, exclude) = parse_selector_with_index(first_part);
-
-    let sel = match Selector::parse(&css_selector) {
-        Ok(s) => s,
-        Err(_) => return vec![],
-    };
-
-    let matches: Vec<_> = doc.select(&sel).collect();
+    let matches = collect_matches(doc, &parse_selector_with_index(first_part));
     if matches.is_empty() { return vec![]; }
-
-    let matches: Vec<_> = if let Some(exclude_indices) = exclude {
-        let exclude_set: HashSet<i32> = exclude_indices.into_iter().collect();
-        matches.into_iter().enumerate()
-            .filter(|(i, _)| !exclude_set.contains(&(*i as i32)))
-            .map(|(_, el)| el)
-            .collect()
-    } else {
-        matches
-    };
-
-    let matches: Vec<_> = if indices.len() == 2 {
-        let start = indices[0] as usize;
-        let end = if indices[1] < 0 { matches.len() } else { indices[1] as usize + 1 };
-        matches.into_iter().skip(start).take(end.saturating_sub(start)).collect()
-    } else {
-        matches
-    };
-
-    let index = indices.get(0).copied().unwrap_or(0);
-
-    if index != 0 || matches.len() == 1 {
-        let idx = if index < 0 {
-            let n = matches.len() as i32 + index;
-            if n < 0 { return vec![]; }
-            n as usize
-        } else if index == 0 {
-            0
-        } else {
-            index as usize
-        };
-
-        if idx < matches.len() {
-            let el = matches[idx];
-            if parts.len() > 1 {
-                let rest = parts[1..].join("@");
-                if let Some(v) = select_text_from_element(&el, &rest) {
-                    return vec![v];
-                }
-            } else {
-                return vec![extract_text(&el, "text").unwrap_or_default()];
-            }
-        }
-        return vec![];
-    }
 
     let mut results = Vec::new();
     for el in matches {
@@ -649,19 +724,53 @@ mod tests {
 
     #[test]
     fn test_parse_selector_with_index() {
-        // .test.0 -> index 0 (which means all)
-        let (sel, idx, _) = parse_selector_with_index(".test.0");
-        assert_eq!(sel, ".test");
-        assert_eq!(idx, vec![0]);
+        let parsed = parse_selector_with_index(".test.0");
+        assert_eq!(parsed.base, SelectorBase::Css(".test".to_string()));
+        assert!(parsed.explicit_index);
+        assert_eq!(parsed.index_mode, IndexMode::Select);
+        assert_eq!(parsed.index_items, vec![IndexItem::Single(0)]);
 
-        // .test.-1 -> last element
-        let (sel, idx, _) = parse_selector_with_index(".test.-1");
-        assert_eq!(sel, ".test");
-        assert_eq!(idx, vec![-1]);
+        let parsed = parse_selector_with_index(".test.-1");
+        assert_eq!(parsed.base, SelectorBase::Css(".test".to_string()));
+        assert_eq!(parsed.index_items, vec![IndexItem::Single(-1)]);
 
-        // .test!0 -> exclude first element
-        let (sel, _, exclude) = parse_selector_with_index(".test!0");
-        assert_eq!(sel, ".test");
-        assert_eq!(exclude, Some(vec![0]));
+        let parsed = parse_selector_with_index(".test!0");
+        assert_eq!(parsed.base, SelectorBase::Css(".test".to_string()));
+        assert_eq!(parsed.index_mode, IndexMode::Exclude);
+        assert_eq!(parsed.index_items, vec![IndexItem::Single(0)]);
+
+        let parsed = parse_selector_with_index("div[-1, 1:3]");
+        assert_eq!(parsed.base, SelectorBase::Css("div".to_string()));
+        assert_eq!(
+            parsed.index_items,
+            vec![
+                IndexItem::Single(-1),
+                IndexItem::Range {
+                    start: Some(1),
+                    end: Some(3),
+                    step: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn test_select_text_list_with_bracket_indices() {
+        let doc = parse_document(
+            r#"<div><a href="/1">A</a><a href="/2">B</a><a href="/3">C</a><a href="/4">D</a></div>"#,
+        );
+
+        assert_eq!(select_text_list(&doc, "a[1:2]@text"), vec!["B".to_string(), "C".to_string()]);
+        assert_eq!(select_text_list(&doc, "a[!1,2]@text"), vec!["A".to_string(), "D".to_string()]);
+        assert_eq!(select_text_list(&doc, "a[-1:0]@text"), vec!["D".to_string(), "C".to_string(), "B".to_string(), "A".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_attr_bracket_syntax() {
+        let doc = parse_document(r#"<div><a href="/book/1" data-id="abc">Book</a></div>"#);
+
+        assert_eq!(select_text(&doc, "a@attr[href]"), Some("/book/1".to_string()));
+        assert_eq!(select_text(&doc, "a@attr[data-id]"), Some("abc".to_string()));
+        assert_eq!(select_text(&doc, "a@href"), Some("/book/1".to_string()));
     }
 }

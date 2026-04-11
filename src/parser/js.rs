@@ -1,6 +1,7 @@
 use rquickjs::{Context, Runtime, Value, Object};
 use rquickjs::function::Func;
 use once_cell::sync::Lazy;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use chrono::{Local, TimeZone};
@@ -13,6 +14,7 @@ use crate::util::text::{apply_regex_replace, strip_whitespace};
 use crate::util::hash::md5_hex;
 
 static JS_KV: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
+static JS_LIB_CACHE: Lazy<Mutex<HashMap<String, String>>> = Lazy::new(|| Mutex::new(HashMap::new()));
 static JS_HTTP_CLIENT: Lazy<Client> = Lazy::new(|| {
     Client::builder()
         .cookie_store(true)
@@ -31,31 +33,74 @@ static JS_DEVICE_ID: Lazy<String> = Lazy::new(|| {
     map.insert("__device_id".to_string(), generated.clone());
     generated
 });
+thread_local! {
+    static ACTIVE_JS_LIB: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+pub fn with_js_lib<T>(js_lib: Option<&str>, f: impl FnOnce() -> T) -> T {
+    ACTIVE_JS_LIB.with(|cell| {
+        let previous = cell.replace(js_lib.map(|value| value.to_string()));
+        let result = f();
+        cell.replace(previous);
+        result
+    })
+}
 
 pub fn eval_js(script: &str, input: &str, base_url: &str) -> anyhow::Result<String> {
-    eval_js_inner(script, Some(input), Some(base_url), None, None)
+    eval_js_inner(script, Some(input), Some(base_url), None, None, None)
+}
+
+pub fn eval_js_with_bindings(
+    script: &str,
+    input: &str,
+    base_url: &str,
+    bindings: &HashMap<String, JsonValue>,
+) -> anyhow::Result<String> {
+    eval_js_inner(script, Some(input), Some(base_url), None, None, Some(bindings))
 }
 
 pub fn eval_js_search_with_source(script: &str, key: &str, page: i32, source_key: &str) -> anyhow::Result<String> {
-    eval_js_inner_with_source(script, None, None, Some(key), Some(page), Some(source_key))
+    eval_js_inner_with_source(script, None, None, Some(key), Some(page), Some(source_key), None)
 }
 
-fn eval_js_inner(script: &str, input: Option<&str>, base_url: Option<&str>, key: Option<&str>, page: Option<i32>) -> anyhow::Result<String> {
-    eval_js_inner_with_source(script, input, base_url, key, page, None)
+fn eval_js_inner(
+    script: &str,
+    input: Option<&str>,
+    base_url: Option<&str>,
+    key: Option<&str>,
+    page: Option<i32>,
+    bindings: Option<&HashMap<String, JsonValue>>,
+) -> anyhow::Result<String> {
+    eval_js_inner_with_source(script, input, base_url, key, page, None, bindings)
 }
 
-fn eval_js_inner_with_source(script: &str, input: Option<&str>, base_url: Option<&str>, key: Option<&str>, page: Option<i32>, source_key: Option<&str>) -> anyhow::Result<String> {
+fn eval_js_inner_with_source(
+    script: &str,
+    input: Option<&str>,
+    base_url: Option<&str>,
+    key: Option<&str>,
+    page: Option<i32>,
+    source_key: Option<&str>,
+    bindings: Option<&HashMap<String, JsonValue>>,
+) -> anyhow::Result<String> {
     let rt = Runtime::new()?;
     let ctx = Context::full(&rt)?;
     ctx.with(|ctx| {
         let globals = ctx.globals();
-        if let Some(input) = input { globals.set("input", input)?; }
-        if let Some(base_url) = base_url { globals.set("base_url", base_url)?; }
+        let input_value = input.unwrap_or("");
+        let base_url_value = base_url.unwrap_or("");
+        let shared_js = active_js_lib_script()?;
+
+        globals.set("input", input_value)?;
+        globals.set("result", input_value)?;
+        globals.set("src", input_value)?;
+        globals.set("base_url", base_url_value)?;
+        globals.set("baseUrl", base_url_value)?;
         if let Some(key) = key { globals.set("key", key)?; }
         if let Some(page) = page { globals.set("page", page)?; }
 
         // Default url variable for Legado compatibility
-        globals.set("url", "")?;
+        globals.set("url", base_url_value)?;
 
         // Stubs for Legado compatibility
         let source_key_val = source_key.unwrap_or("").to_string();
@@ -68,6 +113,18 @@ fn eval_js_inner_with_source(script: &str, input: Option<&str>, base_url: Option
         let cookie_obj = Object::new(ctx.clone())?;
         cookie_obj.set("removeCookie", Func::new(|_key: String| -> String { "".to_string() }))?;
         globals.set("cookie", cookie_obj)?;
+
+        let cache_obj = Object::new(ctx.clone())?;
+        cache_obj.set("get", Func::new(|key: String| -> Option<String> {
+            let map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+            map.get(&key).cloned()
+        }))?;
+        cache_obj.set("put", Func::new(|key: String, val: String| -> bool {
+            let mut map = JS_KV.lock().unwrap_or_else(|e| e.into_inner());
+            map.insert(key, val);
+            true
+        }))?;
+        globals.set("cache", cache_obj)?;
 
         let java_obj = Object::new(ctx.clone())?;
         java_obj.set("ajax", Func::new(|spec: String| -> String {
@@ -140,20 +197,30 @@ fn eval_js_inner_with_source(script: &str, input: Option<&str>, base_url: Option
             strip_whitespace(&input)
         }))?;
 
-        let v: Value = match ctx.eval(script) {
-            Ok(v) => v,
-            Err(e) => {
-                if let Some(exception) = ctx.catch().into_exception() {
-                    return Err(anyhow::anyhow!("JS Exception: {:?}", exception));
-                }
-                return Err(e.into());
+        globals.set("book", Object::new(ctx.clone())?)?;
+        globals.set("chapter", Object::new(ctx.clone())?)?;
+        globals.set("title", "")?;
+        globals.set("nextChapterUrl", "")?;
+        globals.set("rssArticle", Object::new(ctx.clone())?)?;
+
+        if let Some(bindings) = bindings {
+            for (key, value) in bindings {
+                let js_value = ctx.json_parse(value.to_string())?;
+                globals.set(key.as_str(), js_value)?;
             }
-        };
+        }
+
+        if !shared_js.trim().is_empty() {
+            eval_script(ctx.clone(), &shared_js)?;
+        }
+
+        let v = eval_script(ctx.clone(), script)?;
 
         let result = if v.is_null() || v.is_undefined() {
             String::new()
         } else if let Some(s) = v.clone().into_string() {
-            s.to_string().unwrap_or_default()
+            let s: rquickjs::String<'_> = s;
+            s.to_string().map(|value| value.to_string()).unwrap_or_default()
         } else {
             match ctx.json_stringify(v) {
                 Ok(Some(json)) => json.to_string().unwrap_or_default(),
@@ -162,6 +229,66 @@ fn eval_js_inner_with_source(script: &str, input: Option<&str>, base_url: Option
         };
         Ok(result)
     })
+}
+
+fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Value<'js>> {
+    match ctx.eval(script) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            if let Some(exception) = ctx.catch().into_exception() {
+                return Err(anyhow::anyhow!("JS Exception: {:?}", exception));
+            }
+            Err(e.into())
+        }
+    }
+}
+
+fn active_js_lib_script() -> anyhow::Result<String> {
+    let js_lib = ACTIVE_JS_LIB.with(|cell| cell.borrow().clone());
+    let Some(js_lib) = js_lib.filter(|value| !value.trim().is_empty()) else {
+        return Ok(String::new());
+    };
+    let cache_key = md5_hex(&js_lib);
+    if let Some(cached) = JS_LIB_CACHE.lock().unwrap_or_else(|e| e.into_inner()).get(&cache_key).cloned() {
+        return Ok(cached);
+    }
+
+    let compiled = compile_js_lib(&js_lib)?;
+    JS_LIB_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(cache_key, compiled.clone());
+    Ok(compiled)
+}
+
+fn compile_js_lib(js_lib: &str) -> anyhow::Result<String> {
+    let trimmed = js_lib.trim();
+    if trimmed.is_empty() {
+        return Ok(String::new());
+    }
+    if trimmed.starts_with('{') {
+        if let Ok(value) = serde_json::from_str::<JsonValue>(trimmed) {
+            if let Some(map) = value.as_object() {
+                let mut scripts = Vec::new();
+                for entry in map.values() {
+                    if let Some(raw) = entry.as_str() {
+                        scripts.push(resolve_js_lib_entry(raw)?);
+                    }
+                }
+                return Ok(scripts.join("\n"));
+            }
+        }
+    }
+    Ok(trimmed.to_string())
+}
+
+fn resolve_js_lib_entry(entry: &str) -> anyhow::Result<String> {
+    let value = entry.trim();
+    if value.starts_with("http://") || value.starts_with("https://") {
+        let response = JS_HTTP_CLIENT.get(value).send()?;
+        return Ok(response.text().unwrap_or_default());
+    }
+    Ok(value.to_string())
 }
 
 fn java_time_format(timestamp: i64) -> String {

@@ -21,3 +21,8 @@ Thumbs.db
 
 # Storage data (if contains user data)
 /storage/
+
+release-assets/
+node_modules/
+playwright-report/
+test-results/

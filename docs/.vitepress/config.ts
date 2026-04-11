@@ -22,7 +22,8 @@ export default defineConfig({
             { text: '快速开始', link: '/guide/quickstart' },
             { text: '配置', link: '/guide/configuration' },
             { text: '功能特性', link: '/guide/features' },
-            { text: '用户手册', link: '/guide/user-manual' }
+            { text: '用户手册', link: '/guide/user-manual' },
+            { text: '测试流程', link: '/guide/testing' }
           ]
         },
         {

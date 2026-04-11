@@ -4,11 +4,11 @@ outline: deep
 
 # 书源开发概述
 
-书源是 Reader-Rust 的核心，定义了如何从网站获取书籍信息、目录和正文。
+书源定义了 Reader-Rust 如何请求站点、解析搜索结果、读取目录和抓取正文。
 
 ## 书源结构
 
-书源是一个 JSON 对象，包含以下主要部分：
+一个最小可用的书源通常长这样：
 
 ```json
 {
@@ -16,6 +16,8 @@ outline: deep
   "bookSourceUrl": "https://example.com",
   "bookSourceType": 0,
   "enabled": true,
+  "jsLib": "",
+  "searchUrl": "/search?wd={key}&page={page}",
   "ruleSearch": { /* 搜索规则 */ },
   "ruleBookInfo": { /* 书籍信息规则 */ },
   "ruleToc": { /* 目录规则 */ },
@@ -23,21 +25,51 @@ outline: deep
 }
 ```
 
+常见源级字段：
+
+| 字段 | 说明 |
+|------|------|
+| `bookSourceName` | 书源名称 |
+| `bookSourceGroup` | 分组 |
+| `bookSourceUrl` | 书源基础 URL，用于相对路径补全 |
+| `enabled` | 是否启用 |
+| `enabledExplore` | 是否启用发现页 |
+| `header` | 全局请求头，JSON 字符串 |
+| `jsLib` | 共享 JS 库，会在该书源的所有 JS 规则前执行 |
+| `searchUrl` | 搜索请求规则 |
+| `exploreUrl` | 发现页请求规则 |
+| `loginUrl` | 登录请求规则 |
+| `loginCheckJs` | 登录页返回后的校验脚本 |
+| `ruleSearch` | 搜索结果解析 |
+| `ruleBookInfo` | 详情页解析 |
+| `ruleToc` | 目录页解析 |
+| `ruleContent` | 正文页解析 |
+
 ## 解析方式
 
-Reader-Rust 支持多种解析方式：
+当前解析器支持以下模式：
 
-| 方式 | 标识 | 用途 |
+| 方式 | 标识 | 说明 |
 |------|------|------|
-| CSS选择器 | 默认/ `@css:` | HTML网页解析 |
-| JSONPath | `@json:` 或自动检测 | JSON API解析 |
-| XPath | `/` 开头或 `@xpath:` | XML/HTML解析 |
-| 正则 | `@regex:` 或 `:`开头 | 文本提取 |
-| JavaScript | `js:` 或 `@js:` | 复杂逻辑处理 |
+| CSS 选择器 | 默认 / `@css:` | HTML 解析默认模式 |
+| JSONPath | `@json:` 或自动检测 | 响应体是 JSON 时可直接取字段 |
+| XPath | `/`、`./` 或 `@xpath:` | XML / HTML 路径提取 |
+| 正则 | `:` 或 `@regex:` | 主要用于列表规则 |
+| JavaScript | `js:`、`@js:`、`<js>...</js>` | 复杂逻辑或预处理 |
+
+当前各阶段的能力边界：
+
+| 阶段 | 当前支持 |
+|------|----------|
+| `ruleSearch` / `ruleExplore` | CSS / JSONPath / XPath / Regex / JS |
+| `ruleBookInfo` | CSS / JSONPath / XPath |
+| `ruleToc` | CSS / JSONPath / XPath / Regex / JS |
+| `ruleContent.content` | CSS / JSONPath / XPath / JS |
+| `ruleContent.nextContentUrl` | CSS / JSONPath / XPath |
 
 ## 规则流程
 
-```
+```text
 搜索关键词
     ↓
 ruleSearch → 书籍列表 → 选择书籍
@@ -49,11 +81,45 @@ ruleToc → 章节列表
 ruleContent → 章节正文
 ```
 
+正文阶段的实际执行顺序是：
+
+```text
+sourceRegex
+  ↓
+webJs
+  ↓
+content
+  ↓
+replaceRegex
+```
+
+## URL 规则
+
+`searchUrl`、`exploreUrl`、`loginUrl` 使用的是请求规则，不是字段选择器。
+
+当前支持：
+
+- `{key}`：搜索关键词，会自动 URL 编码
+- `{page}`：页码
+- `{{ ... }}`：执行 JS 并把返回值插入 URL
+- `, { ... }`：在 URL 后追加请求配置 JSON
+
+示例：
+
+```json
+{
+  "searchUrl": "/search?wd={key}&page={page}",
+  "exploreUrl": "/rank/{{page}}",
+  "loginUrl": "https://example.com/login,{\"method\":\"POST\",\"body\":\"a=1&b=2\",\"headers\":{\"Content-Type\":\"application/x-www-form-urlencoded\"}}"
+}
+```
+
 ## 调试技巧
 
-1. 使用 `/reader3/testBookSource` 接口测试书源
-2. 检查 `log_level=debug` 的日志输出
-3. 使用浏览器开发者工具分析网页结构
+1. 使用 `/reader3/bookSourceDebugSse` 调试搜索规则
+2. 检查 `log_level=debug` 的服务端日志
+3. 优先先确认站点响应是 HTML 还是 JSON，再写规则
+4. JS 规则运行在服务端 QuickJS 中，不是浏览器 DOM 环境
 
 ## 下一步
 

@@ -139,7 +139,8 @@ function isPlaceholder(item: DisplayItem): item is { __placeholder: true } {
 }
 
 function getDisplayKey(item: DisplayItem) {
-  return isPlaceholder(item) ? PLACEHOLDER_KEY : item.bookUrl
+  if (isPlaceholder(item)) return PLACEHOLDER_KEY
+  return props.isSearch ? `${item.origin}::${item.bookUrl}` : item.bookUrl
 }
 
 function getRemainingBooks() {

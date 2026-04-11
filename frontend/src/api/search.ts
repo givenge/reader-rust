@@ -5,6 +5,7 @@ export function searchBookMulti(params: {
   key: string
   page?: number
   bookSourceGroup?: string
+  bookSourceUrl?: string
 }) {
   return http.post<SearchBook[]>('/searchBookMulti', params).then((r) => r.data)
 }
@@ -16,12 +17,14 @@ export function searchBookMulti(params: {
 export function searchBookMultiSSE(params: {
   key: string
   bookSourceGroup?: string
+  bookSourceUrl?: string
   concurrentCount?: number
   searchSize?: number
 }) {
   const query = new URLSearchParams()
   query.set('key', params.key)
   if (params.bookSourceGroup) query.set('bookSourceGroup', params.bookSourceGroup)
+  if (params.bookSourceUrl) query.set('bookSourceUrl', params.bookSourceUrl)
   if (params.concurrentCount) query.set('concurrentCount', String(params.concurrentCount))
   if (params.searchSize) query.set('searchSize', String(params.searchSize))
 
