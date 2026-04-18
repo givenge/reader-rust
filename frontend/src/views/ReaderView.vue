@@ -432,6 +432,15 @@ async function refreshOfflineCacheState() {
   offlineCachedCount.value = await countBrowserBookCache(store.book.bookUrl).catch(() => 0)
 }
 
+let refreshOfflineCacheStateTimer: number | null = null
+
+function scheduleRefreshOfflineCacheState() {
+  if (refreshOfflineCacheStateTimer) clearTimeout(refreshOfflineCacheStateTimer)
+  refreshOfflineCacheStateTimer = window.setTimeout(() => {
+    void refreshOfflineCacheState()
+  }, 120)
+}
+
 function checkMedia() {
   isMobile.value = window.innerWidth <= 768
   window.setTimeout(() => {
@@ -1519,7 +1528,7 @@ onMounted(async () => {
     store.fetchBookmarks(),
     store.fetchReplaceRules(),
   ])
-  await refreshOfflineCacheState()
+  scheduleRefreshOfflineCacheState()
   updateHorizontalMetrics()
   await rebuildHorizontalPages()
   if (isContinuousMode.value) {
@@ -1543,6 +1552,7 @@ onUnmounted(() => {
   if (speechTimerTicker) clearInterval(speechTimerTicker)
   if (restorePositionTimer) clearTimeout(restorePositionTimer)
   if (persistPositionTimer) clearTimeout(persistPositionTimer)
+  if (refreshOfflineCacheStateTimer) clearTimeout(refreshOfflineCacheStateTimer)
   clearRestoreStabilizers()
   disposeSelection()
   disposeContinuousReading()
@@ -1613,7 +1623,7 @@ watch(() => store.currentIndex, async () => {
   if (isContinuousMode.value && !suppressContinuousSync.value) {
     await syncContinuousToStoreState()
   }
-  void refreshOfflineCacheState()
+  scheduleRefreshOfflineCacheState()
   scheduleRestoreReadingPosition()
 })
 
@@ -1640,7 +1650,7 @@ watch(() => store.content, () => {
   }
   handleContentChanged()
   handleContentUpdated()
-  void refreshOfflineCacheState()
+  scheduleRefreshOfflineCacheState()
   scheduleRestoreReadingPosition()
 })
 
@@ -1652,7 +1662,7 @@ watch(() => store.loading, (loading) => {
 
 watch(() => store.book?.bookUrl, () => {
   loadSavedReadingPosition()
-  void refreshOfflineCacheState()
+  scheduleRefreshOfflineCacheState()
 })
 
 watch([showSearch, searchQuery, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, () => config.value.chineseMode, () => store.replaceRules], () => {

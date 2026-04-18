@@ -87,17 +87,23 @@ export function useContinuousReading(
     const current = await buildContinuousChapter(targetIndex)
     if (!current) return
 
-    const list: ContinuousChapterItem[] = [current]
-    const nextIndex = hideReadChaptersMode.value ? findNextVisibleIndex(targetIndex + 1, targetIndex) : targetIndex + 1
-    const next = nextIndex >= 0 ? await buildContinuousChapter(nextIndex) : null
-    if (next) {
-      list.push(next)
-    }
-    continuousChapters.value = list
+    continuousChapters.value = [current]
     setContinuousActiveChapter(targetIndex, current.content, 0)
 
     await nextTick()
     scrollToContinuousChapter(targetIndex, smooth)
+
+    const nextIndex = hideReadChaptersMode.value
+      ? findNextVisibleIndex(targetIndex + 1, targetIndex)
+      : targetIndex + 1
+    if (nextIndex < 0) return
+
+    void (async () => {
+      const next = await buildContinuousChapter(nextIndex)
+      if (!next) return
+      if (continuousChapters.value.some((chapter) => chapter.index === next.index)) return
+      continuousChapters.value = [...continuousChapters.value, next]
+    })()
   }
 
   async function syncContinuousToStoreState() {

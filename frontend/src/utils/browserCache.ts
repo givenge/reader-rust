@@ -1,6 +1,7 @@
 const DB_NAME = 'reader-browser-cache'
 const DB_VERSION = 1
 const STORE_NAME = 'chapters'
+let dbPromise: Promise<IDBDatabase> | null = null
 
 export interface BrowserChapterCacheRecord {
   key: string
@@ -24,20 +25,33 @@ function cacheKey(bookUrl: string, chapterUrl: string) {
 }
 
 function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION)
+  if (!dbPromise) {
+    dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION)
 
-    request.onerror = () => reject(request.error)
-    request.onsuccess = () => resolve(request.result)
-    request.onupgradeneeded = () => {
-      const db = request.result
-      if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'key' })
-        store.createIndex('bookUrl', 'bookUrl', { unique: false })
-        store.createIndex('updatedAt', 'updatedAt', { unique: false })
+      request.onerror = () => reject(request.error)
+      request.onsuccess = () => {
+        const db = request.result
+        db.onversionchange = () => {
+          db.close()
+          dbPromise = null
+        }
+        resolve(db)
       }
-    }
-  })
+      request.onupgradeneeded = () => {
+        const db = request.result
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          const store = db.createObjectStore(STORE_NAME, { keyPath: 'key' })
+          store.createIndex('bookUrl', 'bookUrl', { unique: false })
+          store.createIndex('updatedAt', 'updatedAt', { unique: false })
+        }
+      }
+    }).catch((error: unknown) => {
+      dbPromise = null
+      throw error
+    })
+  }
+  return dbPromise!
 }
 
 async function withStore<T>(mode: IDBTransactionMode, handler: (store: IDBObjectStore) => Promise<T>): Promise<T> {
@@ -49,16 +63,13 @@ async function withStore<T>(mode: IDBTransactionMode, handler: (store: IDBObject
     handler(store)
       .then((result) => {
         tx.oncomplete = () => {
-          db.close()
           resolve(result)
         }
         tx.onerror = () => {
-          db.close()
           reject(tx.error)
         }
       })
       .catch((error) => {
-        db.close()
         reject(error)
       })
   })
