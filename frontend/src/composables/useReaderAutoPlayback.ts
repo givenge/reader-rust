@@ -4,6 +4,7 @@ import type { useReaderStore } from '../stores/reader'
 type ReaderStore = ReturnType<typeof useReaderStore>
 const OPENAI_SPEECH_CHUNK_CHAR_LIMIT = 70
 const OPENAI_PRELOAD_CHUNK_LIMIT = 5
+const OPENAI_MERGED_SEGMENT_CHAR_LIMIT = 260
 
 interface AutoPlaybackConfig {
   autoPageMode: string
@@ -30,8 +31,8 @@ export function useReaderAutoPlayback(
   let speechRestartTimer: number | null = null
   let isSpeechTransitioning = false
   let currentSpeechParagraph: HTMLElement | null = null
-  let currentSpeechChunks: string[] = []
-  let currentSpeechChunkIndex = 0
+  let currentSpeechSegments: { text: string; nextParagraph: HTMLElement | null }[] = []
+  let currentSpeechSegmentIndex = 0
 
   function isSafariSpeechDelayBrowser() {
     if (typeof navigator === 'undefined') return false
@@ -167,10 +168,66 @@ export function useReaderAutoPlayback(
     return chunks.length ? chunks : [rawText]
   }
 
+  function buildMergedSpeechSegment(paragraph: HTMLElement | null) {
+    const currentText = paragraph?.innerText.trim() || ''
+    if (!currentText) {
+      return {
+        text: '',
+        nextParagraph: getNextParagraph(),
+      }
+    }
+
+    const list = getFilteredParagraphs()
+    const startIndex = paragraph ? list.indexOf(paragraph) : -1
+    if (startIndex < 0) {
+      return {
+        text: currentText,
+        nextParagraph: getNextParagraph(),
+      }
+    }
+
+    const mergedTexts: string[] = [currentText]
+    let mergedLength = currentText.length
+    let cursorIndex = startIndex + 1
+
+    while (cursorIndex < list.length && mergedLength < OPENAI_MERGED_SEGMENT_CHAR_LIMIT) {
+      const nextText = list[cursorIndex]?.innerText.trim() || ''
+      if (!nextText) {
+        cursorIndex += 1
+        continue
+      }
+      if (mergedLength + nextText.length > OPENAI_MERGED_SEGMENT_CHAR_LIMIT) {
+        break
+      }
+      mergedTexts.push(nextText)
+      mergedLength += nextText.length
+      cursorIndex += 1
+    }
+
+    return {
+      text: mergedTexts.join('\n'),
+      nextParagraph: list[cursorIndex] || null,
+    }
+  }
+
   function resetSpeechChunkState() {
     currentSpeechParagraph = null
-    currentSpeechChunks = []
-    currentSpeechChunkIndex = 0
+    currentSpeechSegments = []
+    currentSpeechSegmentIndex = 0
+  }
+
+  function buildOpenAISpeechSegments(paragraph: HTMLElement) {
+    if (store.speechConfig.openaiRequestMode === 'merged') {
+      const merged = buildMergedSpeechSegment(paragraph)
+      return merged.text ? [merged] : []
+    }
+
+    const paragraphChunks = buildParagraphSpeechChunks(paragraph)
+    const nextParagraph = getNextParagraph()
+    return paragraphChunks.map((text, index) => ({
+      text,
+      nextParagraph: index < paragraphChunks.length - 1 ? paragraph : nextParagraph,
+    }))
   }
 
   function ensureSpeechChunkState(paragraph: HTMLElement) {
@@ -183,22 +240,33 @@ export function useReaderAutoPlayback(
 
     if (currentSpeechParagraph !== paragraph) {
       currentSpeechParagraph = paragraph
-      currentSpeechChunks = buildParagraphSpeechChunks(paragraph)
-      currentSpeechChunkIndex = 0
+      currentSpeechSegments = buildOpenAISpeechSegments(paragraph)
+      currentSpeechSegmentIndex = 0
     }
 
-    return {
-      text: currentSpeechChunks[currentSpeechChunkIndex] || '',
-      nextParagraph: currentSpeechChunkIndex < currentSpeechChunks.length - 1 ? paragraph : getNextParagraphFrom(paragraph),
+    return currentSpeechSegments[currentSpeechSegmentIndex] || {
+      text: '',
+      nextParagraph: getNextParagraphFrom(paragraph),
     }
   }
 
   function getUpcomingSpeechChunks(startParagraph: HTMLElement | null) {
     const chunks: string[] = []
 
-    if (store.speechConfig.provider === 'openai' && currentSpeechParagraph && currentSpeechChunks.length) {
-      for (let i = currentSpeechChunkIndex + 1; i < currentSpeechChunks.length && chunks.length < OPENAI_PRELOAD_CHUNK_LIMIT; i += 1) {
-        chunks.push(currentSpeechChunks[i])
+    if (store.speechConfig.provider !== 'openai') {
+      return chunks
+    }
+
+    if (store.speechConfig.openaiRequestMode === 'merged') {
+      const merged = buildMergedSpeechSegment(startParagraph)
+      return merged.text ? [merged.text] : []
+    }
+
+    if (currentSpeechParagraph && currentSpeechSegments.length) {
+      for (let i = currentSpeechSegmentIndex + 1; i < currentSpeechSegments.length && chunks.length < OPENAI_PRELOAD_CHUNK_LIMIT; i += 1) {
+        if (currentSpeechSegments[i]?.text) {
+          chunks.push(currentSpeechSegments[i].text)
+        }
       }
     }
 
@@ -452,8 +520,8 @@ export function useReaderAutoPlayback(
       provider: store.speechConfig.provider,
       text: chunk.text.slice(0, 60),
       nextParagraph: paragraphPreview(nextParagraph),
-      chunkIndex: currentSpeechChunkIndex,
-      chunkCount: currentSpeechChunks.length,
+      chunkIndex: currentSpeechSegmentIndex,
+      chunkCount: currentSpeechSegments.length,
     })
     store.startTTS(chunk.text, {
       onEnd: () => {
@@ -461,11 +529,11 @@ export function useReaderAutoPlayback(
           provider: store.speechConfig.provider,
           currentParagraph: paragraphPreview(current),
           nextParagraph: paragraphPreview(nextParagraph),
-          chunkIndex: currentSpeechChunkIndex,
-          chunkCount: currentSpeechChunks.length,
+          chunkIndex: currentSpeechSegmentIndex,
+          chunkCount: currentSpeechSegments.length,
         })
-        if (store.speechConfig.provider === 'openai' && currentSpeechParagraph === current && currentSpeechChunkIndex < currentSpeechChunks.length - 1) {
-          currentSpeechChunkIndex += 1
+        if (store.speechConfig.provider === 'openai' && currentSpeechParagraph === current && currentSpeechSegmentIndex < currentSpeechSegments.length - 1) {
+          currentSpeechSegmentIndex += 1
           continueSpeechTarget(current, false)
           return
         }

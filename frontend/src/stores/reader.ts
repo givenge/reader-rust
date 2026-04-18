@@ -132,6 +132,8 @@ interface PreloadedOpenAIAudio {
 const OPENAI_AUDIO_PRELOAD_LIMIT = 8
 
 export type SpeechProvider = 'system' | 'openai'
+export type OpenAISpeechFormat = 'mp3' | 'wav' | 'opus' | 'flac' | 'pcm'
+export type OpenAISpeechRequestMode = 'chunked' | 'merged'
 
 interface SpeechConfig {
   provider: SpeechProvider
@@ -143,6 +145,8 @@ interface SpeechConfig {
   openaiApiKey: string
   openaiModel: string
   openaiVoice: string
+  openaiFormat: OpenAISpeechFormat
+  openaiRequestMode: OpenAISpeechRequestMode
 }
 
 const defaultSpeechConfig: SpeechConfig = {
@@ -155,6 +159,8 @@ const defaultSpeechConfig: SpeechConfig = {
   openaiApiKey: '',
   openaiModel: 'qwen-tts',
   openaiVoice: 'vivian',
+  openaiFormat: 'mp3',
+  openaiRequestMode: 'chunked',
 }
 
 function loadSpeechConfig(): SpeechConfig {
@@ -319,9 +325,12 @@ export const useReaderStore = defineStore('reader', () => {
     return chineseConverter.value(text)
   }
 
+  function processContentForDisplay(text: string) {
+    return convertContent(applyReplaceRules(text))
+  }
+
   const displayContent = computed(() => {
-    let text = applyReplaceRules(content.value)
-    return convertContent(text)
+    return processContentForDisplay(content.value)
   })
 
   watch(
@@ -589,6 +598,18 @@ export const useReaderStore = defineStore('reader', () => {
     saveSpeechConfig()
   }
 
+  function setOpenAISpeechFormat(format: OpenAISpeechFormat) {
+    speechConfig.openaiFormat = format
+    clearPreloadedOpenAIAudio()
+    saveSpeechConfig()
+  }
+
+  function setOpenAISpeechRequestMode(mode: OpenAISpeechRequestMode) {
+    speechConfig.openaiRequestMode = mode
+    clearPreloadedOpenAIAudio()
+    saveSpeechConfig()
+  }
+
   function setSpeechRate(rate: number) {
     speechConfig.speechRate = rate
     clearPreloadedOpenAIAudio()
@@ -606,6 +627,7 @@ export const useReaderStore = defineStore('reader', () => {
       speechConfig.openaiApiKey.trim(),
       speechConfig.openaiModel,
       speechConfig.openaiVoice,
+      speechConfig.openaiFormat,
       speechConfig.speechRate.toFixed(1),
       rawText,
     ].join('::')
@@ -618,6 +640,7 @@ export const useReaderStore = defineStore('reader', () => {
       input: rawText.slice(0, 4096),
       model: speechConfig.openaiModel,
       voice: speechConfig.openaiVoice,
+      format: speechConfig.openaiFormat,
       speed: speechConfig.speechRate,
       signal,
     })
@@ -1530,8 +1553,8 @@ export const useReaderStore = defineStore('reader', () => {
     voiceList, speechConfig, speechStopAt, speechProviderLabel, openAISpeechConfigured,
     systemTtsNativeEventsReliable,
     fetchVoices, setVoiceName, setSpeechProvider, setSpeechRate, setSpeechPitch, setSpeechStopTimer, clearSpeechStopTimer,
-    setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, preloadOpenAITTS,
-    displayContent,
+    setOpenAISpeechBaseUrl, setOpenAISpeechApiKey, setOpenAISpeechModel, setOpenAISpeechVoice, setOpenAISpeechFormat, setOpenAISpeechRequestMode, preloadOpenAITTS,
+    displayContent, processContentForDisplay,
     isAutoScrolling,
   }
 })

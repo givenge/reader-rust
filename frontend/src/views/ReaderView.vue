@@ -497,6 +497,10 @@ function formatChapterHtml(rawText: string) {
     .join('')
 }
 
+function renderChapterHtml(rawText: string) {
+  return formatChapterHtml(store.processContentForDisplay(rawText || ''))
+}
+
 const formattedContent = computed(() => formatChapterHtml(store.displayContent || ''))
 
 const {
@@ -533,15 +537,13 @@ const {
   initializeContinuousChapters,
   syncContinuousToStoreState,
   loadContinuousNext,
-  ensureContinuousChapterLoaded,
   getContinuousSections,
-  scrollToContinuousChapter,
   pruneReadChapters,
   clearContinuousChapters,
   disposeContinuousReading,
 } = useContinuousReading(
   store,
-  formatChapterHtml,
+  renderChapterHtml,
   isContinuousMode,
   hideReadChaptersMode,
   scrollContainerRef,
@@ -621,13 +623,7 @@ async function prevChapter() {
     return
   }
 
-  await ensureContinuousChapterLoaded(targetIndex)
-  const chapter = getContinuousChapter(targetIndex)
-  if (!chapter) return
-  setContinuousActiveChapter(targetIndex, chapter.content, 0)
-  suppressContinuousScrollSyncUntil = Date.now() + 400
-  await nextTick()
-  scrollToContinuousChapter(targetIndex, false)
+  await rebuildContinuousAtChapter(targetIndex)
 }
 
 async function nextChapter() {
@@ -640,13 +636,7 @@ async function nextChapter() {
     return
   }
 
-  await ensureContinuousChapterLoaded(targetIndex)
-  const chapter = getContinuousChapter(targetIndex)
-  if (!chapter) return
-  setContinuousActiveChapter(targetIndex, chapter.content, 0)
-  suppressContinuousScrollSyncUntil = Date.now() + 400
-  await nextTick()
-  scrollToContinuousChapter(targetIndex, false)
+  await rebuildContinuousAtChapter(targetIndex)
 }
 
 async function jumpFromCatalog(targetIndex: number) {
@@ -659,20 +649,14 @@ async function jumpFromCatalog(targetIndex: number) {
     return
   }
 
-  const jumpDistance = Math.abs(targetIndex - store.currentIndex)
-  if (jumpDistance > 2) {
-    suppressContinuousScrollSyncUntil = Date.now() + 400
-    await initializeContinuousChapters(targetIndex, false)
-  } else {
-    await ensureContinuousChapterLoaded(targetIndex)
-    const chapter = getContinuousChapter(targetIndex)
-    if (!chapter) return
-    setContinuousActiveChapter(targetIndex, chapter.content, 0)
-    suppressContinuousScrollSyncUntil = Date.now() + 400
-    await nextTick()
-    scrollToContinuousChapter(targetIndex, false)
-  }
+  await rebuildContinuousAtChapter(targetIndex)
   store.closePanel()
+}
+
+async function rebuildContinuousAtChapter(targetIndex: number) {
+  suppressContinuousScrollSyncUntil = Date.now() + 500
+  suppressContinuousAutoLoadUntil = Date.now() + 500
+  await initializeContinuousChapters(targetIndex, false)
 }
 
 function scrollToTop() {
@@ -1649,7 +1633,7 @@ watch(() => store.content, () => {
     const current = getContinuousChapter(store.currentIndex)
     if (current) {
       current.content = store.content
-      current.html = formatChapterHtml(store.content)
+      current.html = renderChapterHtml(store.content)
     } else if (store.content) {
       void initializeContinuousChapters(store.currentIndex, false)
     }
@@ -1671,7 +1655,7 @@ watch(() => store.book?.bookUrl, () => {
   void refreshOfflineCacheState()
 })
 
-watch([showSearch, searchQuery, () => config.value.paragraphSpacing, () => config.value.firstLineIndent], () => {
+watch([showSearch, searchQuery, () => config.value.paragraphSpacing, () => config.value.firstLineIndent, () => config.value.chineseMode, () => store.replaceRules], () => {
   if (isContinuousMode.value) {
     syncContinuousChapterHtml()
   }

@@ -273,8 +273,43 @@
           >
         </div>
 
+        <div class="setting-row setting-row-top">
+          <label>音频格式</label>
+          <select
+            class="voice-select"
+            :value="store.speechConfig.openaiFormat"
+            @change="store.setOpenAISpeechFormat(($event.target as HTMLSelectElement).value as 'mp3' | 'wav' | 'opus' | 'flac' | 'pcm')"
+          >
+            <option value="mp3">mp3</option>
+            <option value="wav">wav</option>
+            <option value="opus">opus</option>
+            <option value="flac">flac</option>
+            <option value="pcm">pcm</option>
+          </select>
+        </div>
+
+        <div class="setting-row setting-row-top">
+          <label>请求模式</label>
+          <div class="btn-group">
+            <button
+              class="opt-btn"
+              :class="{ active: store.speechConfig.openaiRequestMode === 'chunked' }"
+              @click="store.setOpenAISpeechRequestMode('chunked')"
+            >
+              少字多请求
+            </button>
+            <button
+              class="opt-btn"
+              :class="{ active: store.speechConfig.openaiRequestMode === 'merged' }"
+              @click="store.setOpenAISpeechRequestMode('merged')"
+            >
+              多字少请求
+            </button>
+          </div>
+        </div>
+
         <div class="setting-hint">
-          填写服务基地址、模型名和音色名即可。前端只会请求 `/v1/audio/speech`，URL 和 Key 仅保存在当前浏览器。
+          少字多请求会按短句细分并预加载更多片段；多字少请求会合并较短段落，只预加载下一段。URL 和 Key 仅保存在当前浏览器。
         </div>
       </template>
 

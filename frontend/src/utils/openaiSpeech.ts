@@ -14,6 +14,7 @@ export interface OpenAISpeechRequest {
   input: string
   model: string
   voice: string
+  format?: string
   speed?: number
   signal?: AbortSignal
 }
@@ -52,6 +53,7 @@ export async function requestOpenAISpeechAudio({
   input,
   model,
   voice,
+  format,
   speed,
   signal,
 }: OpenAISpeechRequest) {
@@ -65,7 +67,7 @@ export async function requestOpenAISpeechAudio({
       model,
       input,
       voice,
-      response_format: 'mp3',
+      response_format: format || 'mp3',
       speed,
     }),
     signal,
