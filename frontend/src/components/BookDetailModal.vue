@@ -82,6 +82,16 @@
               </svg>
               {{ (book as Book).durChapterIndex ? '继续阅读' : '开始阅读' }}
             </button>
+            <button class="action-btn" @click="openAiBook">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M12 2v4" />
+                <path d="M12 18v4" />
+                <path d="M2 12h4" />
+                <path d="M18 12h4" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              AI资料
+            </button>
             <button class="action-btn" @click="close">关闭</button>
           </div>
         </div>
@@ -169,6 +179,16 @@ async function readChapter(index: number) {
   await readerStore.loadChapter(index)
   close()
   router.push('/reader')
+}
+
+function openAiBook() {
+  if (!props.book) return
+  const b = props.book as Book
+  close()
+  router.push({
+    name: 'ai-book',
+    query: { bookUrl: b.bookUrl },
+  })
 }
 </script>
 

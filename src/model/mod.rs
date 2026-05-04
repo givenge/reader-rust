@@ -8,3 +8,4 @@ pub mod rss;
 pub mod bookmark;
 pub mod replace_rule;
 pub mod book_group;
+pub mod ai_book;

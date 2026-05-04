@@ -37,6 +37,7 @@
           @click="$emit('click', $event)"
           @info="$emit('info', $event)"
           @delete="$emit('delete', $event)"
+          @ai="$emit('ai', $event)"
           @select="$emit('select', $event)"
           @addToShelf="$emit('addToShelf', $event)"
         />
@@ -93,6 +94,7 @@ const emit = defineEmits<{
   click: [book: Book | SearchBook]
   info: [book: Book | SearchBook]
   delete: [book: Book | SearchBook]
+  ai: [book: Book | SearchBook]
   select: [book: Book | SearchBook]
   addToShelf: [book: Book | SearchBook]
   reorder: [payload: { draggedUrl: string; targetUrl: string }]

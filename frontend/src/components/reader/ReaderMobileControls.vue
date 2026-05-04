@@ -63,6 +63,9 @@
         <button class="m-btn" @click="$emit('info')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
         </button>
+        <button class="m-btn" @click="$emit('ai')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4" /><path d="M12 18v4" /><path d="m4.93 4.93 2.83 2.83" /><path d="m16.24 16.24 2.83 2.83" /><path d="M2 12h4" /><path d="M18 12h4" /><path d="m4.93 19.07 2.83-2.83" /><path d="m16.24 7.76 2.83-2.83" /><circle cx="12" cy="12" r="3" /></svg>
+        </button>
         <button class="m-btn" @click="$emit('scrollTop')">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
         </button>
@@ -128,6 +131,7 @@ defineEmits<{
   bookmark: []
   search: []
   info: []
+  ai: []
   tts: []
   progress: []
 }>()

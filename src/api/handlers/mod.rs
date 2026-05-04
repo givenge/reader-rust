@@ -6,6 +6,7 @@ mod bookmark;
 mod replace_rule;
 mod webdav;
 mod book_group;
+mod ai_book;
 
 pub use book::*;
 pub use book_source::*;
@@ -58,6 +59,7 @@ pub use webdav::{
 };
 pub use book_group::*;
 pub use book_source::login_book_source;
+pub use ai_book::*;
 
 use axum::response::IntoResponse;
 use axum::Json;

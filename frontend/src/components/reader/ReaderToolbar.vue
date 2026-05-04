@@ -9,6 +9,9 @@
     <button class="tb-btn" @click="$emit('info')" title="书籍信息">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
     </button>
+    <button class="tb-btn" @click="$emit('ai')" title="AI资料">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4" /><path d="M12 18v4" /><path d="m4.93 4.93 2.83 2.83" /><path d="m16.24 16.24 2.83 2.83" /><path d="M2 12h4" /><path d="M18 12h4" /><path d="m4.93 19.07 2.83-2.83" /><path d="m16.24 7.76 2.83-2.83" /><circle cx="12" cy="12" r="3" /></svg>
+    </button>
     <button class="tb-btn" :class="{ spinning: store.loading }" @click="store.refreshContent()" title="刷新">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" /><path d="M16 16h5v5" /></svg>
     </button>
@@ -66,6 +69,7 @@ defineEmits<{
   bookmark: []
   search: []
   info: []
+  ai: []
   tts: []
   prev: []
   next: []

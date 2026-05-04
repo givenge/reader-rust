@@ -66,6 +66,13 @@
         <span v-if="browserCachedCount > 0" class="cache-chip primary">离线 {{ browserCachedCount }} 章</span>
         <span v-if="serverCachedCount > 0" class="cache-chip">服务端 {{ serverCachedCount }} 章</span>
       </div>
+      <button
+        v-if="showAiEntry"
+        class="ai-entry-btn"
+        @click.stop="$emit('ai', book)"
+      >
+        AI资料
+      </button>
       <!-- Search mode: add to shelf -->
       <button
         v-if="isSearch"
@@ -99,6 +106,7 @@ const emit = defineEmits<{
   click: [book: Book | SearchBook]
   info: [book: Book | SearchBook]
   delete: [book: Book | SearchBook]
+  ai: [book: Book | SearchBook]
   addToShelf: [book: Book | SearchBook]
   select: [book: Book | SearchBook]
 }>()
@@ -152,6 +160,11 @@ const sourceName = computed(() => {
 const sourceGroup = computed(() => {
   if (!props.isSearch) return ''
   return asSearchBook.value.originGroup || ''
+})
+const showAiEntry = computed(() => {
+  if (props.isSearch || props.editMode) return false
+  const currentBook = props.book as Book
+  return currentBook.recentKind !== 'rss'
 })
 </script>
 
@@ -446,6 +459,27 @@ const sourceGroup = computed(() => {
 .cache-chip.primary {
   background: rgba(201, 127, 58, 0.12);
   color: var(--color-primary);
+}
+
+.ai-entry-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: rgba(201, 127, 58, 0.12);
+  color: var(--color-primary);
+  border: 1px solid rgba(201, 127, 58, 0.2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  transition: all var(--duration-fast);
+  align-self: flex-start;
+}
+
+.ai-entry-btn:hover {
+  background: rgba(201, 127, 58, 0.18);
+  border-color: rgba(201, 127, 58, 0.32);
 }
 
 .add-shelf-btn {

@@ -176,3 +176,76 @@ export interface RssArticle {
   read?: boolean
   variable?: string
 }
+
+// ─── AI 设定集 ───
+export interface AiBookConfig {
+  baseUrl: string
+  apiKey: string
+  textModel: string
+  imageModel: string
+  imageSize: string
+}
+
+export interface AiBookNote {
+  title: string
+  content: string
+  confidence?: string
+}
+
+export interface AiBookCharacter {
+  name: string
+  aliases?: string[]
+  status: string
+  faction?: string
+  location?: string
+  description?: string
+  lastSeenChapter?: string
+}
+
+export interface AiBookRelationship {
+  source: string
+  target: string
+  relation: string
+  status?: string
+  description?: string
+}
+
+export interface AiBookLocation {
+  name: string
+  kind?: string
+  description: string
+  status?: string
+  relatedCharacters?: string[]
+  firstSeenChapter?: string
+}
+
+export interface AiBookMap {
+  imageUrl?: string
+  prompt?: string
+  updatedAt?: number
+  sourceChapterIndex?: number
+}
+
+export interface AiBookMemory {
+  bookUrl: string
+  bookName?: string
+  author?: string
+  enabled: boolean
+  processedChapterIndex?: number
+  processedChapterTitle?: string
+  updatedAt: number
+  summary?: string
+  worldview: AiBookNote[]
+  characters: AiBookCharacter[]
+  relationships: AiBookRelationship[]
+  locations: AiBookLocation[]
+  map?: AiBookMap | null
+  mapDirty?: boolean
+  lastError?: string
+}
+
+export interface AiBookModelUpdate {
+  memory: AiBookMemory
+  shouldRegenerateMap: boolean
+  mapPrompt?: string
+}

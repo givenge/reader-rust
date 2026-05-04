@@ -46,6 +46,7 @@
       @bookmark="toggleBookmark"
       @search="toggleSearch"
       @info="openInfo"
+      @ai="openAiBook"
       @tts="handleTTS"
       @prev="prevChapter"
       @next="nextChapter"
@@ -64,6 +65,7 @@
       @bookmark="toggleBookmark"
       @search="openSearch"
       @info="openInfo"
+      @ai="openAiBook"
       @tts="handleTTS"
       @progress="openCachePanel"
     />
@@ -1500,6 +1502,14 @@ async function openInfo() {
   } catch {
     appStore.showToast('获取书籍详情失败，已显示当前缓存信息', 'warning')
   }
+}
+
+function openAiBook() {
+  if (!store.book) return
+  router.push({
+    name: 'ai-book',
+    query: { bookUrl: store.book.bookUrl },
+  })
 }
 
 onMounted(async () => {

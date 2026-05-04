@@ -2,6 +2,7 @@
 import { ref, computed, reactive, watch } from 'vue'
 import { useAppStore } from './app'
 import { useBookshelfStore } from './bookshelf'
+import { useAiBookStore } from './aiBook'
 import {
   getChapterList,
   getBookContent,
@@ -177,6 +178,7 @@ export const useReaderStore = defineStore('reader', () => {
   type ReaderPanel = 'catalog' | 'settings' | 'bookshelf' | 'source' | 'bookmark' | 'rule' | 'cache' | null
   const appStore = useAppStore()
   const shelfStore = useBookshelfStore()
+  const aiBookStore = useAiBookStore()
   const book = ref<Book | null>(null)
   const chapters = ref<BookChapter[]>([])
   const currentIndex = ref(0)
@@ -1412,7 +1414,17 @@ export const useReaderStore = defineStore('reader', () => {
 
   async function nextChapter() {
     if (hasNext.value) {
+      const completedBook = book.value ? { ...book.value } : null
+      const completedChapter = currentChapter.value ? { ...currentChapter.value } : null
+      const completedContent = content.value
       await loadChapter(currentIndex.value + 1)
+      if (completedBook && completedChapter && completedContent) {
+        void aiBookStore.autoUpdateCompletedChapter({
+          book: completedBook,
+          chapter: completedChapter,
+          chapterContent: completedContent,
+        })
+      }
     }
   }
 
