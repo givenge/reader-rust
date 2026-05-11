@@ -137,9 +137,11 @@ impl UserService {
     pub async fn get_user_info(
         &self,
         access_token: Option<&str>,
-    ) -> Result<(Option<Value>, bool, bool), AppError> {
+        secure_key: Option<&str>,
+    ) -> Result<(Option<Value>, bool, bool, bool), AppError> {
+        let admin_authorized = self.is_admin(access_token, secure_key).await?;
         if !self.cfg.secure {
-            return Ok((None, false, self.secure_key_required()));
+            return Ok((None, false, self.secure_key_required(), admin_authorized));
         }
         if let Some(token) = access_token {
             if let Some(user) = self.check_auth(token).await? {
@@ -147,10 +149,11 @@ impl UserService {
                     Some(self.format_user(&user)),
                     true,
                     self.secure_key_required(),
+                    admin_authorized,
                 ));
             }
         }
-        Ok((None, true, self.secure_key_required()))
+        Ok((None, true, self.secure_key_required(), admin_authorized))
     }
 
     pub async fn save_user_config(&self, user_ns: &str, config: Value) -> Result<(), AppError> {
@@ -937,11 +940,14 @@ mod tests {
             .insert(raw_token.clone(), short_expire_at);
         service.save_users(&users).await.unwrap();
 
-        let (user_info, secure, secure_key_required) =
-            service.get_user_info(Some(&access_token)).await.unwrap();
+        let (user_info, secure, secure_key_required, admin_authorized) = service
+            .get_user_info(Some(&access_token), None)
+            .await
+            .unwrap();
 
         assert!(secure);
         assert!(!secure_key_required);
+        assert!(admin_authorized);
         assert_eq!(
             user_info.unwrap()["accessToken"].as_str().unwrap(),
             access_token
@@ -955,6 +961,29 @@ mod tests {
             .copied()
             .unwrap();
         assert!(expire_at > short_expire_at);
+
+        let _ = fs::remove_dir_all(temp_dir).await;
+    }
+
+    #[tokio::test]
+    async fn get_user_info_reports_admin_authorization_from_secure_key() {
+        let (mut service, temp_dir) = create_user_service().await;
+        service.cfg.secure_key = "manage-key".to_string();
+
+        let (_, secure, secure_key_required, admin_authorized) = service
+            .get_user_info(None, Some("manage-key"))
+            .await
+            .unwrap();
+
+        assert!(secure);
+        assert!(secure_key_required);
+        assert!(admin_authorized);
+
+        let (_, _, _, denied) = service
+            .get_user_info(None, Some("wrong-key"))
+            .await
+            .unwrap();
+        assert!(!denied);
 
         let _ = fs::remove_dir_all(temp_dir).await;
     }

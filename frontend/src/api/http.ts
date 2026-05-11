@@ -1,5 +1,6 @@
 import axios from 'axios'
 import type { ApiResponse } from '../types'
+import { buildAuthHeaderValues } from '../utils/secureAccess'
 
 let lastNeedLoginDispatchAt = 0
 
@@ -12,15 +13,18 @@ function dispatchNeedLogin() {
 
 const http = axios.create({
   baseURL: '/reader3',
-  timeout: 30000,
+  timeout: 120000,
   headers: { 'Content-Type': 'application/json' },
 })
 
 // ─── Request interceptor: attach token ───
 http.interceptors.request.use((config) => {
-  const token = localStorage.getItem('accessToken')
-  if (token) {
-    config.headers.Authorization = token
+  const { accessToken, secureKey } = buildAuthHeaderValues(localStorage)
+  if (accessToken) {
+    config.headers.Authorization = accessToken
+  }
+  if (secureKey) {
+    config.headers['X-Secure-Key'] = secureKey
   }
   return config
 })

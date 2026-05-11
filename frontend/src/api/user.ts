@@ -24,7 +24,8 @@ export function getUserInfo() {
     .get<{
       userInfo: UserInfo | null
       secure: boolean
-      secureKey: boolean
+      secureKeyRequired: boolean
+      adminAuthorized: boolean
     }>('/getUserInfo')
     .then((r) => r.data)
 }

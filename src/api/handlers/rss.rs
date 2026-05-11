@@ -113,6 +113,26 @@ pub async fn delete_rss_source(
     Ok(Json(ApiResponse::ok(Value::String("".to_string()))))
 }
 
+pub async fn delete_rss_sources(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Json(sources): Json<Vec<RssSource>>,
+) -> Result<Json<ApiResponse<Value>>, AppError> {
+    let user_ns = resolve_user_ns(
+        &state,
+        auth.access_token(),
+        auth.secure_key(),
+        auth.user_ns(),
+    )
+    .await?;
+    let mut list = read_list::<RssSource>(&state, &user_ns, "rssSources.json").await?;
+    let deleted = remove_rss_sources_by_url(&mut list, &sources);
+    write_list(&state, &user_ns, "rssSources.json", &list).await?;
+    Ok(Json(ApiResponse::ok(
+        serde_json::json!({ "deleted": deleted }),
+    )))
+}
+
 pub async fn read_remote_rss_source_file(
     Json(param): Json<RemoteRssSourceParam>,
 ) -> Result<Json<ApiResponse<Vec<String>>>, AppError> {
@@ -385,5 +405,52 @@ where
         list[pos] = item;
     } else {
         list.push(item);
+    }
+}
+
+fn remove_rss_sources_by_url(list: &mut Vec<RssSource>, targets: &[RssSource]) -> usize {
+    let before = list.len();
+    let target_urls = targets
+        .iter()
+        .filter(|source| !source.source_url.is_empty())
+        .map(|source| source.source_url.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    list.retain(|source| !target_urls.contains(source.source_url.as_str()));
+    before.saturating_sub(list.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rss_source(name: &str, url: &str) -> RssSource {
+        RssSource {
+            source_name: name.to_string(),
+            source_url: url.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn remove_rss_sources_by_url_keeps_unmatched_sources() {
+        let mut list = vec![
+            rss_source("News", "https://news.example"),
+            rss_source("Tech", "https://tech.example"),
+            rss_source("Blog", "https://blog.example"),
+        ];
+        let targets = vec![
+            rss_source("Ignored Name", "https://tech.example"),
+            rss_source("Missing", "https://missing.example"),
+        ];
+
+        let deleted = remove_rss_sources_by_url(&mut list, &targets);
+
+        assert_eq!(deleted, 1);
+        assert_eq!(
+            list.iter()
+                .map(|source| source.source_url.as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://news.example", "https://blog.example"]
+        );
     }
 }

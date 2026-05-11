@@ -3,11 +3,11 @@ import { ref, computed } from 'vue'
 import { exploreBook } from '../api/explore'
 import { useSourceStore } from './source'
 import type { SearchBook, BookSource } from '../types'
-
-export interface ExploreCategory {
-  title: string
-  url: string
-}
+import {
+  getInitialExploreCategoryUrl,
+  parseExploreCategories,
+  type ExploreCategory,
+} from '../utils/exploreCategories'
 
 export const useExploreStore = defineStore('explore', () => {
   const sourceStore = useSourceStore()
@@ -33,49 +33,34 @@ export const useExploreStore = defineStore('explore', () => {
 
   // 解析当前书源的 exploreUrl 分类
   const categories = computed<ExploreCategory[]>(() => {
-    if (!currentSource.value || !currentSource.value.exploreUrl) return []
-    const rule = currentSource.value.exploreUrl.trim()
-    
-    try {
-      // 尝试解析 JSON 格式 (如 [{"title":"男频","url":"..."}])
-      if (rule.startsWith('[')) {
-        const arr = JSON.parse(rule)
-        if (Array.isArray(arr)) return arr
-      }
-    } catch {
-      // continue to fallback parsing
-    }
-
-    // 解析 Legado 常见的双冒号格式: 男频::https://... \n 女频::https://...
-    const lines = rule.split(/\n|<br>/i).map((line: string) => line.trim()).filter(Boolean)
-    const result: ExploreCategory[] = []
-    
-    for (const line of lines) {
-      if (line.includes('::')) {
-        const [title, url] = line.split('::').map((s: string) => s.trim())
-        if (title && url) {
-          result.push({ title, url })
-        }
-      }
-    }
-    return result
+    return parseExploreCategories(currentSource.value?.exploreUrl)
   })
 
   function setSource(url: string) {
-    if (activeSourceUrl.value !== url) {
+    const sourceChanged = activeSourceUrl.value !== url
+    if (sourceChanged) {
       activeSourceUrl.value = url
-      // 默认选中第一个分类
-      if (categories.value.length > 0) {
-        setCategory(categories.value[0].url)
-      } else {
-        setCategory('')
-      }
+    }
+
+    const firstCategoryUrl = getInitialExploreCategoryUrl(categories.value)
+    if (!firstCategoryUrl) {
+      activeCategoryUrl.value = ''
+      books.value = []
+      hasMore.value = false
+      return
+    }
+
+    const activeCategoryStillValid = categories.value.some((category) => category.url === activeCategoryUrl.value)
+    if (sourceChanged || !activeCategoryStillValid) {
+      setCategory(firstCategoryUrl)
     }
   }
 
   function setCategory(url: string) {
-    if (activeCategoryUrl.value !== url) {
-      activeCategoryUrl.value = url
+    const nextUrl = url.trim()
+    if (!nextUrl) return
+    if (activeCategoryUrl.value !== nextUrl) {
+      activeCategoryUrl.value = nextUrl
       resetAndFetch()
     }
   }

@@ -104,14 +104,15 @@ pub async fn get_user_info(
     State(state): State<AppState>,
     auth: AuthContext,
 ) -> Result<Json<ApiResponse<Value>>, AppError> {
-    let (user_info, secure, secure_key) = state
+    let (user_info, secure, secure_key_required, admin_authorized) = state
         .user_service
-        .get_user_info(auth.access_token())
+        .get_user_info(auth.access_token(), auth.secure_key())
         .await?;
     let data = serde_json::json!({
         "userInfo": user_info,
         "secure": secure,
-        "secureKey": secure_key,
+        "secureKeyRequired": secure_key_required,
+        "adminAuthorized": admin_authorized,
     });
     Ok(Json(ApiResponse::ok(data)))
 }

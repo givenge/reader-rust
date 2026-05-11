@@ -152,6 +152,10 @@ pub fn build_router(state: AppState) -> Router {
             get(handlers::get_available_book_source).post(handlers::get_available_book_source),
         )
         .route(
+            "/reader3/getAvailableBookSourceSSE",
+            get(handlers::get_available_book_source_sse),
+        )
+        .route(
             "/reader3/bookSourceDebugSSE",
             get(handlers::book_source_debug_sse),
         )
@@ -162,6 +166,10 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/reader3/deleteRssSource",
             post(handlers::delete_rss_source),
+        )
+        .route(
+            "/reader3/deleteRssSources",
+            post(handlers::delete_rss_sources),
         )
         .route(
             "/reader3/readRemoteRssSourceFile",

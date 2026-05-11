@@ -26,3 +26,4 @@ release-assets/
 node_modules/
 playwright-report/
 test-results/
+.superpowers/

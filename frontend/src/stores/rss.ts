@@ -1,8 +1,9 @@
 ﻿import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import { deleteRssSource, getRssArticles, getRssContent, getRssSources, saveRssSource, saveRssSources } from '../api/rss'
+import { deleteRssSource, deleteRssSources, getRssArticles, getRssContent, getRssSources, saveRssSource, saveRssSources } from '../api/rss'
 import type { RssArticle, RssSource } from '../types'
 import { saveRecentReadBook } from '../utils/recentBooks'
+import { toRssSourceDeletePayload } from '../utils/sourceSelection'
 
 type ArticleScope = 'source' | 'group' | 'all'
 type ScopedArticle = RssArticle & { variable?: string }
@@ -116,6 +117,20 @@ export const useRssStore = defineStore('rss', () => {
       activeContent.value = ''
     }
     await fetchSources()
+  }
+
+  async function removeSources(targets: RssSource[]) {
+    if (!targets.length) return 0
+    const targetUrls = new Set(targets.map((source) => source.sourceUrl))
+    const result = await deleteRssSources(toRssSourceDeletePayload(targets))
+    if (targetUrls.has(activeSourceUrl.value)) {
+      activeSourceUrl.value = ''
+      articles.value = []
+      activeArticle.value = null
+      activeContent.value = ''
+    }
+    await fetchSources()
+    return result.deleted
   }
 
   async function fetchArticlesForSource(source: RssSource, pageNo: number) {
@@ -257,6 +272,7 @@ export const useRssStore = defineStore('rss', () => {
     addSource,
     addSources,
     removeSource,
+    removeSources,
     fetchArticles,
     openArticle,
     setSource,

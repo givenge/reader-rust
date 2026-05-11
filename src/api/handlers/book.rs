@@ -1,7 +1,7 @@
 use crate::api::auth::AuthContext;
 use crate::api::AppState;
 use crate::error::error::{ApiResponse, AppError};
-use crate::model::{book::Book, book_source::BookSource};
+use crate::model::{book::Book, book_source::BookSource, search::SearchBook};
 use crate::util::text::{normalize_source_url, repair_encoded_url};
 use axum::body::Body;
 use axum::body::Bytes;
@@ -14,11 +14,18 @@ use axum::{
 };
 use futures::stream::FuturesUnordered;
 use futures::StreamExt;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::convert::Infallible;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 use tokio_stream::wrappers::ReceiverStream;
+
+const DEFAULT_AVAILABLE_RESULT_LIMIT: usize = 20;
+const MAX_AVAILABLE_RESULT_LIMIT: usize = 100;
+const DEFAULT_AVAILABLE_CONCURRENT_COUNT: usize = 8;
+const MAX_AVAILABLE_CONCURRENT_COUNT: usize = 20;
+const AVAILABLE_SOURCE_SSE_RESULT_LIMIT: usize = 5;
 
 #[derive(Debug, Deserialize)]
 pub struct SearchBookRequest {
@@ -172,7 +179,23 @@ pub struct GetAvailableBookSourceRequest {
     url: Option<String>,
     name: Option<String>,
     author: Option<String>,
+    #[serde(alias = "bookSourceUrl")]
+    origin: Option<String>,
     refresh: Option<i32>,
+    #[serde(rename = "lastIndex")]
+    last_index: Option<i32>,
+    #[serde(rename = "resultLimit")]
+    result_limit: Option<i32>,
+    #[serde(rename = "concurrentCount")]
+    concurrent_count: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableBookSourceResponse {
+    books: Vec<SearchBook>,
+    last_index: i32,
+    has_more: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -1768,11 +1791,19 @@ pub async fn get_available_book_source(
         .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
     let req = if let Some(b) = body { b.0 } else { q };
     let refresh = req.refresh.unwrap_or(0) > 0;
+    let paged_request =
+        !should_use_available_source_cache(refresh, req.result_limit, req.last_index);
+    let result_limit = if paged_request {
+        effective_available_result_limit(req.result_limit)
+    } else {
+        usize::MAX
+    };
+    let concurrent_count = effective_available_concurrent_count(req.concurrent_count);
 
     // Try to find book by URL first, then by name+author
     let book_url = req.url.clone();
 
-    if !refresh {
+    if !paged_request {
         if let Some(ref url) = book_url {
             if let Some(list) = state
                 .book_service
@@ -1807,41 +1838,311 @@ pub async fn get_available_book_source(
             }
         }
     };
+    let book = book.or_else(|| fallback_available_book(&req));
 
     let book = book.ok_or_else(|| AppError::BadRequest("书籍信息错误".to_string()))?;
     let sources = state.book_source_service.list(&user_ns).await?;
     if sources.is_empty() {
+        if paged_request {
+            return Ok(Json(ApiResponse::ok(
+                serde_json::to_value(build_available_book_source_response(
+                    Vec::new(),
+                    req.last_index.unwrap_or(-1),
+                    false,
+                    req.result_limit,
+                ))
+                .unwrap_or_default(),
+            )));
+        }
         return Ok(Json(ApiResponse::ok(serde_json::json!([]))));
     }
 
-    let mut tasks: FuturesUnordered<_> = FuturesUnordered::new();
-    for source in sources {
-        let svc = state.book_service.clone();
-        let name = book.name.clone();
-        let author = book.author.clone();
-        let user_ns_value = user_ns.clone();
-        tasks.push(tokio::spawn(async move {
-            let res = svc.search_book(&user_ns_value, &source, &name, 1).await;
-            (res, name, author)
-        }));
+    let mut result: Vec<SearchBook> = Vec::new();
+    let mut cursor = (req.last_index.unwrap_or(-1) + 1).max(0) as usize;
+    let mut last_index = req.last_index.unwrap_or(-1);
+
+    while cursor < sources.len() {
+        let batch_end = (cursor + concurrent_count).min(sources.len());
+        let mut tasks: FuturesUnordered<_> = FuturesUnordered::new();
+        for source_index in cursor..batch_end {
+            let source = sources[source_index].clone();
+            let svc = state.book_service.clone();
+            let name = book.name.clone();
+            let author = book.author.clone();
+            let user_ns_value = user_ns.clone();
+            tasks.push(tokio::spawn(async move {
+                let res = svc.search_book(&user_ns_value, &source, &name, 1).await;
+                (source_index as i32, res, name, author)
+            }));
+        }
+
+        let mut batch_results = Vec::new();
+        while let Some(res) = tasks.next().await {
+            if let Ok((source_index, search_result, name, author)) = res {
+                let matches = match search_result {
+                    Ok(list) => list
+                        .into_iter()
+                        .filter(|b| available_source_matches_target(b, &name, &author))
+                        .collect::<Vec<_>>(),
+                    Err(err) => {
+                        tracing::debug!(
+                            "getAvailableBookSource search failed at source index {}: {:?}",
+                            source_index,
+                            err
+                        );
+                        Vec::new()
+                    }
+                };
+                batch_results.push((source_index, matches));
+            }
+        }
+
+        batch_results.sort_by_key(|(source_index, _)| *source_index);
+        for (source_index, matches) in batch_results {
+            if result.len() >= result_limit {
+                break;
+            }
+            last_index = source_index;
+            for book in matches {
+                if result.len() >= result_limit {
+                    break;
+                }
+                result.push(book);
+            }
+        }
+
+        cursor = batch_end;
+        if result.len() >= result_limit {
+            break;
+        }
     }
-    let mut result: Vec<crate::model::search::SearchBook> = Vec::new();
-    while let Some(res) = tasks.next().await {
-        if let Ok((Ok(list), name, author)) = res {
-            for b in list {
-                if b.name == name && b.author == author {
-                    result.push(b);
+
+    let has_more = (last_index + 1).max(0) < sources.len() as i32;
+    if !has_more && req.last_index.unwrap_or(-1) < 0 {
+        let _ = state
+            .book_service
+            .save_book_sources_cache(&user_ns, &book.book_url, &result)
+            .await;
+    }
+
+    if paged_request {
+        let response =
+            build_available_book_source_response(result, last_index, has_more, req.result_limit);
+        return Ok(Json(ApiResponse::ok(
+            serde_json::to_value(response).unwrap_or_default(),
+        )));
+    }
+
+    Ok(Json(ApiResponse::ok(
+        serde_json::to_value(result).unwrap_or_default(),
+    )))
+}
+
+pub async fn get_available_book_source_sse(
+    State(state): State<AppState>,
+    auth: AuthContext,
+    Query(req): Query<GetAvailableBookSourceRequest>,
+) -> Result<Sse<impl futures::Stream<Item = Result<Event, Infallible>>>, AppError> {
+    let user_ns = state
+        .user_service
+        .resolve_user_ns_with_override(auth.access_token(), auth.secure_key(), auth.user_ns())
+        .await
+        .map_err(|_| AppError::BadRequest("NEED_LOGIN".to_string()))?;
+    let refresh = req.refresh.unwrap_or(0) > 0;
+    let last_index_start = req.last_index.unwrap_or(-1);
+    let concurrent_count = effective_available_concurrent_count(req.concurrent_count);
+    let book_url = req.url.clone();
+
+    let book = if let Some(ref url) = book_url {
+        state.book_service.get_shelf_book(&user_ns, url).await?
+    } else {
+        None
+    };
+    let book = match book {
+        Some(b) => b,
+        None => if let (Some(name), Some(author)) = (&req.name, &req.author) {
+            state
+                .book_service
+                .find_shelf_book_by_name_author(&user_ns, name, author)
+                .await?
+        } else {
+            None
+        }
+        .or_else(|| fallback_available_book(&req))
+        .ok_or_else(|| AppError::BadRequest("书籍信息错误".to_string()))?,
+    };
+
+    let (tx, rx) = mpsc::channel::<Event>(16);
+
+    if !refresh && last_index_start < 0 {
+        if let Some(ref url) = book_url {
+            if let Some(cached) = state
+                .book_service
+                .load_book_sources_cache(&user_ns, url)
+                .await?
+            {
+                let current_origin = book.origin.clone();
+                let cached = take_available_source_cached_matches(
+                    cached,
+                    (!current_origin.trim().is_empty()).then_some(current_origin.as_str()),
+                    AVAILABLE_SOURCE_SSE_RESULT_LIMIT,
+                );
+                if cached.is_empty() {
+                    // Ignore stale caches that only contain the current source.
+                } else {
+                    tokio::spawn(async move {
+                        let mut last_index = -1;
+                        for book in cached {
+                            last_index += 1;
+                            let payload = serde_json::json!({
+                                "lastIndex": last_index,
+                                "hasMore": false,
+                                "data": [book]
+                            });
+                            if tx
+                                .send(Event::default().data(payload.to_string()))
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                        let _ = tx
+                            .send(
+                                Event::default().event("end").data(
+                                    serde_json::json!({"lastIndex": last_index, "hasMore": false})
+                                        .to_string(),
+                                ),
+                            )
+                            .await;
+                    });
+                    return Ok(Sse::new(ReceiverStream::new(rx).map(Ok)));
                 }
             }
         }
     }
-    let _ = state
-        .book_service
-        .save_book_sources_cache(&user_ns, &book.book_url, &result)
-        .await;
-    Ok(Json(ApiResponse::ok(
-        serde_json::to_value(result).unwrap_or_default(),
-    )))
+
+    let sources = state.book_source_service.list(&user_ns).await?;
+    let state_clone = state.clone();
+    tokio::spawn(async move {
+        if sources.is_empty() {
+            let _ = tx
+                .send(
+                    Event::default().event("end").data(
+                        serde_json::json!({"lastIndex": last_index_start, "hasMore": false})
+                            .to_string(),
+                    ),
+                )
+                .await;
+            return;
+        }
+
+        let mut next_index = (last_index_start + 1).max(0) as usize;
+        let mut last_idx = last_index_start;
+        let mut emitted = 0usize;
+        let mut all_results: Vec<SearchBook> = Vec::new();
+        let mut seen = std::collections::HashSet::<String>::new();
+        let mut tasks = JoinSet::new();
+
+        while next_index < sources.len() || !tasks.is_empty() {
+            while tasks.len() < concurrent_count
+                && next_index < sources.len()
+                && emitted < AVAILABLE_SOURCE_SSE_RESULT_LIMIT
+            {
+                let source_index = next_index;
+                let source = sources[source_index].clone();
+                let svc = state_clone.book_service.clone();
+                let target_name = book.name.clone();
+                let target_author = book.author.clone();
+                let user_ns_value = user_ns.clone();
+                tasks.spawn(async move {
+                    let res = svc
+                        .search_book(&user_ns_value, &source, &target_name, 1)
+                        .await;
+                    (source_index as i32, res, target_name, target_author)
+                });
+                next_index += 1;
+            }
+
+            if emitted >= AVAILABLE_SOURCE_SSE_RESULT_LIMIT || tasks.is_empty() {
+                break;
+            }
+
+            match tasks.join_next().await {
+                Some(Ok((source_index, search_result, target_name, target_author))) => {
+                    last_idx = last_idx.max(source_index);
+                    match search_result {
+                        Ok(list) => {
+                            let matches = take_available_source_sse_matches(
+                                list,
+                                &target_name,
+                                &target_author,
+                                Some(&book.origin),
+                                &mut seen,
+                                AVAILABLE_SOURCE_SSE_RESULT_LIMIT - emitted,
+                            );
+                            for book in matches {
+                                emitted += 1;
+                                all_results.push(book.clone());
+                                let payload = serde_json::json!({
+                                    "lastIndex": source_index,
+                                    "hasMore": next_index < sources.len() || !tasks.is_empty(),
+                                    "data": [book]
+                                });
+                                if tx
+                                    .send(Event::default().data(payload.to_string()))
+                                    .await
+                                    .is_err()
+                                {
+                                    tasks.abort_all();
+                                    return;
+                                }
+                                if emitted >= AVAILABLE_SOURCE_SSE_RESULT_LIMIT {
+                                    break;
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            tracing::debug!(
+                                "getAvailableBookSourceSSE search failed at source index {}: {:?}",
+                                source_index,
+                                err
+                            );
+                        }
+                    }
+                }
+                Some(Err(err)) => {
+                    tracing::debug!("getAvailableBookSourceSSE task join failed: {:?}", err);
+                }
+                None => break,
+            }
+        }
+
+        let has_more = next_index < sources.len() || !tasks.is_empty();
+        if has_more {
+            tasks.abort_all();
+        }
+        let final_last_idx = if has_more {
+            last_idx.max(next_index as i32 - 1)
+        } else {
+            last_idx
+        };
+
+        if !has_more && last_index_start < 0 {
+            let _ = state_clone
+                .book_service
+                .save_book_sources_cache(&user_ns, &book.book_url, &all_results)
+                .await;
+        }
+
+        let _ = tx
+            .send(Event::default().event("end").data(
+                serde_json::json!({"lastIndex": final_last_idx, "hasMore": has_more}).to_string(),
+            ))
+            .await;
+    });
+
+    Ok(Sse::new(ReceiverStream::new(rx).map(Ok)))
 }
 
 pub async fn book_source_debug_sse(
@@ -2117,10 +2418,159 @@ fn book_matches_delete_target(shelf_book: &Book, target: &Book) -> bool {
         && shelf_book.author == target.author
 }
 
+fn effective_available_result_limit(result_limit: Option<i32>) -> usize {
+    result_limit
+        .unwrap_or(DEFAULT_AVAILABLE_RESULT_LIMIT as i32)
+        .clamp(1, MAX_AVAILABLE_RESULT_LIMIT as i32) as usize
+}
+
+fn effective_available_concurrent_count(concurrent_count: Option<i32>) -> usize {
+    concurrent_count
+        .unwrap_or(DEFAULT_AVAILABLE_CONCURRENT_COUNT as i32)
+        .clamp(1, MAX_AVAILABLE_CONCURRENT_COUNT as i32) as usize
+}
+
+fn should_use_available_source_cache(
+    refresh: bool,
+    result_limit: Option<i32>,
+    last_index: Option<i32>,
+) -> bool {
+    !refresh && result_limit.is_none() && last_index.is_none()
+}
+
+fn fallback_available_book(req: &GetAvailableBookSourceRequest) -> Option<Book> {
+    let book_url = req.url.as_deref()?.trim();
+    let name = req.name.as_deref()?.trim();
+    if book_url.is_empty() || name.is_empty() {
+        return None;
+    }
+
+    let origin = req.origin.as_deref().unwrap_or_default().trim();
+    Some(Book {
+        book_url: repair_encoded_url(book_url),
+        name: name.to_string(),
+        author: req.author.as_deref().unwrap_or_default().trim().to_string(),
+        origin: if origin.is_empty() {
+            String::new()
+        } else {
+            normalize_source_url(origin)
+        },
+        ..Book::default()
+    })
+}
+
+fn build_available_book_source_response(
+    mut books: Vec<SearchBook>,
+    last_index: i32,
+    has_more: bool,
+    result_limit: Option<i32>,
+) -> AvailableBookSourceResponse {
+    let limit = effective_available_result_limit(result_limit);
+    let has_more = has_more || books.len() > limit;
+    books.truncate(limit);
+    AvailableBookSourceResponse {
+        books,
+        last_index,
+        has_more,
+    }
+}
+
+fn available_source_sse_result_key(book: &SearchBook) -> String {
+    format!("{}::{}", book.origin, book.book_url)
+}
+
+fn available_source_matches_target(
+    book: &SearchBook,
+    target_name: &str,
+    target_author: &str,
+) -> bool {
+    normalize_available_book_name(&book.name) == normalize_available_book_name(target_name)
+        && normalize_available_author(&book.author) == normalize_available_author(target_author)
+}
+
+fn normalize_available_book_name(value: &str) -> String {
+    value.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn normalize_available_author(value: &str) -> String {
+    let compact: String = value.chars().filter(|ch| !ch.is_whitespace()).collect();
+    let without_label = compact
+        .strip_prefix("作者：")
+        .or_else(|| compact.strip_prefix("作者:"))
+        .or_else(|| compact.strip_prefix("作者"))
+        .unwrap_or(&compact);
+    without_label
+        .trim_start_matches(['：', ':'])
+        .trim()
+        .to_string()
+}
+
+fn take_available_source_cached_matches(
+    cached: Vec<SearchBook>,
+    excluded_origin: Option<&str>,
+    limit: usize,
+) -> Vec<SearchBook> {
+    let mut matches = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for book in cached {
+        if matches.len() >= limit {
+            break;
+        }
+        if excluded_origin
+            .map(|origin| book.origin == origin)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if seen.insert(available_source_sse_result_key(&book)) {
+            matches.push(book);
+        }
+    }
+    matches
+}
+
+fn take_available_source_sse_matches(
+    books: Vec<SearchBook>,
+    target_name: &str,
+    target_author: &str,
+    excluded_origin: Option<&str>,
+    seen: &mut std::collections::HashSet<String>,
+    limit: usize,
+) -> Vec<SearchBook> {
+    if limit == 0 {
+        return Vec::new();
+    }
+
+    let mut matches = Vec::new();
+    for book in books {
+        if matches.len() >= limit {
+            break;
+        }
+        if !available_source_matches_target(&book, target_name, target_author) {
+            continue;
+        }
+        if excluded_origin
+            .map(|origin| book.origin == origin)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if seen.insert(available_source_sse_result_key(&book)) {
+            matches.push(book);
+        }
+    }
+    matches
+}
+
 #[cfg(test)]
 mod tests {
-    use super::book_matches_delete_target;
-    use crate::model::book::Book;
+    use super::{
+        book_matches_delete_target, build_available_book_source_response, fallback_available_book,
+        should_use_available_source_cache, take_available_source_cached_matches,
+        take_available_source_sse_matches, GetAvailableBookSourceRequest,
+    };
+    use crate::model::{book::Book, search::SearchBook};
+    use std::collections::HashSet;
 
     #[test]
     fn delete_target_matches_by_book_url() {
@@ -2153,5 +2603,114 @@ mod tests {
         };
 
         assert!(book_matches_delete_target(&shelf_book, &target));
+    }
+
+    #[test]
+    fn available_book_source_limits_result_count_and_reports_more() {
+        let books: Vec<SearchBook> = (0..25)
+            .map(|index| SearchBook {
+                name: format!("Book {index}"),
+                author: if index == 3 {
+                    "作者：Author".to_string()
+                } else {
+                    "Author".to_string()
+                },
+                ..SearchBook::default()
+            })
+            .collect();
+
+        let response = build_available_book_source_response(books, 11, true, Some(20));
+
+        assert_eq!(response.books.len(), 20);
+        assert_eq!(response.books[0].name, "Book 0");
+        assert_eq!(response.books[19].name, "Book 19");
+        assert_eq!(response.last_index, 11);
+        assert!(response.has_more);
+    }
+
+    #[test]
+    fn available_book_source_paged_requests_skip_complete_cache() {
+        assert!(should_use_available_source_cache(false, None, None));
+        assert!(!should_use_available_source_cache(true, None, None));
+        assert!(!should_use_available_source_cache(false, Some(20), None));
+        assert!(!should_use_available_source_cache(false, None, Some(0)));
+    }
+
+    #[test]
+    fn available_book_source_can_fallback_to_request_book() {
+        let req = GetAvailableBookSourceRequest {
+            url: Some("https://example.test/book/1".to_string()),
+            name: Some("深空彼岸".to_string()),
+            author: Some("辰东".to_string()),
+            origin: Some("https://source.test".to_string()),
+            refresh: None,
+            last_index: None,
+            result_limit: None,
+            concurrent_count: None,
+        };
+
+        let book = fallback_available_book(&req).expect("fallback book");
+
+        assert_eq!(book.book_url, "https://example.test/book/1");
+        assert_eq!(book.name, "深空彼岸");
+        assert_eq!(book.author, "辰东");
+        assert_eq!(book.origin, "https://source.test");
+    }
+
+    #[test]
+    fn available_book_source_cache_ignores_current_source_only_results() {
+        let cached = vec![SearchBook {
+            name: "深空彼岸".to_string(),
+            author: "作者：辰东".to_string(),
+            origin: "https://m.22biqu.com/".to_string(),
+            book_url: "https://m.22biqu.com/biqu2986/".to_string(),
+            ..SearchBook::default()
+        }];
+
+        let matches =
+            take_available_source_cached_matches(cached, Some("https://m.22biqu.com/"), 5);
+
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn available_book_source_sse_takes_matches_until_limit() {
+        let books: Vec<SearchBook> = (0..8)
+            .map(|index| SearchBook {
+                name: if index == 0 {
+                    "Other".to_string()
+                } else {
+                    "Book".to_string()
+                },
+                author: if index == 3 {
+                    "作者：Author".to_string()
+                } else {
+                    "Author".to_string()
+                },
+                origin: if index == 2 {
+                    "current-source".to_string()
+                } else {
+                    format!("source-{index}")
+                },
+                book_url: format!("book-{index}"),
+                ..SearchBook::default()
+            })
+            .collect();
+        let mut seen = HashSet::new();
+
+        let matches = take_available_source_sse_matches(
+            books,
+            "Book",
+            "Author",
+            Some("current-source"),
+            &mut seen,
+            5,
+        );
+
+        assert_eq!(matches.len(), 5);
+        assert_eq!(matches[0].origin, "source-1");
+        assert_eq!(matches[1].origin, "source-3");
+        assert_eq!(matches[4].origin, "source-6");
+        assert_eq!(seen.len(), 5);
     }
 }

@@ -93,6 +93,18 @@ impl BookService {
         self.source_cookies.write().await.remove(&key);
     }
 
+    async fn request_headers_for_source(
+        &self,
+        user_ns: &str,
+        source: &BookSource,
+    ) -> Vec<(String, String)> {
+        let mut headers = Vec::new();
+        append_source_headers(source, &mut headers);
+        self.apply_source_cookie(user_ns, source, &mut headers)
+            .await;
+        headers
+    }
+
     pub async fn search_book(
         &self,
         user_ns: &str,
@@ -123,16 +135,7 @@ impl BookService {
             e
         })?;
 
-        // Merge global headers from source
-        if let Some(header_str) = &source.header {
-            if let Ok(headers) =
-                serde_json::from_str::<std::collections::HashMap<String, String>>(header_str)
-            {
-                for (k, v) in headers {
-                    spec.headers.push((k, v));
-                }
-            }
-        }
+        append_source_headers(source, &mut spec.headers);
         self.apply_source_cookie(user_ns, source, &mut spec.headers)
             .await;
 
@@ -167,15 +170,7 @@ impl BookService {
             source.js_lib.as_deref(),
         )?;
 
-        if let Some(header_str) = &source.header {
-            if let Ok(headers) =
-                serde_json::from_str::<std::collections::HashMap<String, String>>(header_str)
-            {
-                for (k, v) in headers {
-                    spec.headers.push((k, v));
-                }
-            }
-        }
+        append_source_headers(source, &mut spec.headers);
         self.apply_source_cookie(user_ns, source, &mut spec.headers)
             .await;
 
@@ -200,15 +195,7 @@ impl BookService {
             &source.book_source_url,
             source.js_lib.as_deref(),
         )?;
-        if let Some(header_str) = &source.header {
-            if let Ok(headers) =
-                serde_json::from_str::<std::collections::HashMap<String, String>>(header_str)
-            {
-                for (k, v) in headers {
-                    spec.headers.push((k, v));
-                }
-            }
-        }
+        append_source_headers(source, &mut spec.headers);
 
         let res = fetch(&self.http, spec).await?;
         let check_result = if let Some(login_check_js) = source
@@ -239,9 +226,7 @@ impl BookService {
         source: &BookSource,
         book_url: &str,
     ) -> Result<Book, AppError> {
-        let mut headers = vec![];
-        self.apply_source_cookie(user_ns, source, &mut headers)
-            .await;
+        let headers = self.request_headers_for_source(user_ns, source).await;
         let res = fetch(
             &self.http,
             RequestSpec {
@@ -281,7 +266,7 @@ impl BookService {
             }
         }
         let (chapters, _) = self
-            .get_chapter_list_with_pagination(source, toc_url)
+            .get_chapter_list_with_pagination(user_ns, source, toc_url)
             .await?;
         // Save to cache
         let _ = self
@@ -297,9 +282,7 @@ impl BookService {
         source: &BookSource,
         toc_url: &str,
     ) -> Result<(Vec<BookChapter>, ChapterPagination), AppError> {
-        let mut headers = vec![];
-        self.apply_source_cookie(user_ns, source, &mut headers)
-            .await;
+        let headers = self.request_headers_for_source(user_ns, source).await;
         let res = fetch(
             &self.http,
             RequestSpec {
@@ -388,8 +371,8 @@ impl BookService {
                 }
                 visited_page_urls.insert(url.clone());
 
-                let mut headers = vec![];
-                self.apply_source_cookie(&pagination.user_ns, &pagination.source, &mut headers)
+                let headers = self
+                    .request_headers_for_source(&pagination.user_ns, &pagination.source)
                     .await;
                 let res = fetch(
                     &self.http,
@@ -439,8 +422,8 @@ impl BookService {
                 }
                 visited_page_urls.insert(current_url.clone());
 
-                let mut headers = vec![];
-                self.apply_source_cookie(&pagination.user_ns, &pagination.source, &mut headers)
+                let headers = self
+                    .request_headers_for_source(&pagination.user_ns, &pagination.source)
                     .await;
                 let res = fetch(
                     &self.http,
@@ -496,6 +479,7 @@ impl BookService {
 
     async fn get_chapter_list_with_pagination(
         &self,
+        user_ns: &str,
         source: &BookSource,
         toc_url: &str,
     ) -> Result<(Vec<BookChapter>, Vec<String>), AppError> {
@@ -510,7 +494,7 @@ impl BookService {
             RequestSpec {
                 url: toc_url.to_string(),
                 method: HttpMethod::GET,
-                headers: vec![],
+                headers: self.request_headers_for_source(user_ns, source).await,
                 body: None,
             },
         )
@@ -554,7 +538,7 @@ impl BookService {
                     RequestSpec {
                         url: url.clone(),
                         method: HttpMethod::GET,
-                        headers: vec![],
+                        headers: self.request_headers_for_source(user_ns, source).await,
                         body: None,
                     },
                 )
@@ -589,7 +573,7 @@ impl BookService {
                     RequestSpec {
                         url: current_url.clone(),
                         method: HttpMethod::GET,
-                        headers: vec![],
+                        headers: self.request_headers_for_source(user_ns, source).await,
                         body: None,
                     },
                 )
@@ -656,9 +640,7 @@ impl BookService {
             visited_urls.insert(current_url.clone());
 
             tracing::debug!("get_content fetching: {}", current_url);
-            let mut headers = vec![];
-            self.apply_source_cookie(user_ns, source, &mut headers)
-                .await;
+            let headers = self.request_headers_for_source(user_ns, source).await;
             let res = fetch(
                 &self.http,
                 RequestSpec {
@@ -1342,6 +1324,171 @@ fn content_type_from_ext(ext: &str) -> String {
         _ => "application/octet-stream",
     }
     .to_string()
+}
+
+fn append_source_headers(source: &BookSource, headers: &mut Vec<(String, String)>) {
+    let Some(header_str) = source.header.as_deref() else {
+        return;
+    };
+    headers.extend(parse_source_headers(header_str));
+}
+
+fn parse_source_headers(header_str: &str) -> Vec<(String, String)> {
+    let trimmed = header_str.trim();
+    if trimmed.is_empty() {
+        return vec![];
+    }
+
+    if let Ok(headers) = serde_json::from_str::<HashMap<String, String>>(trimmed) {
+        return headers
+            .into_iter()
+            .filter(|(key, _)| !key.trim().is_empty())
+            .collect();
+    }
+
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if let Some(object) = value.as_object() {
+            return object
+                .iter()
+                .filter_map(|(key, value)| {
+                    if key.trim().is_empty() {
+                        return None;
+                    }
+                    value.as_str().map(|value| (key.clone(), value.to_string()))
+                })
+                .collect();
+        }
+    }
+
+    parse_legacy_header_object(trimmed)
+}
+
+fn parse_legacy_header_object(raw: &str) -> Vec<(String, String)> {
+    let mut text = raw.trim();
+    if let Some(inner) = text
+        .strip_prefix('{')
+        .and_then(|value| value.strip_suffix('}'))
+    {
+        text = inner;
+    }
+
+    let chars: Vec<char> = text.chars().collect();
+    let mut index = 0usize;
+    let mut headers = Vec::new();
+
+    while index < chars.len() {
+        skip_header_separators(&chars, &mut index);
+        if index >= chars.len() {
+            break;
+        }
+
+        let key = match parse_header_key(&chars, &mut index) {
+            Some(key) => key,
+            None => {
+                index += 1;
+                continue;
+            }
+        };
+
+        skip_header_whitespace(&chars, &mut index);
+        if chars.get(index) != Some(&':') {
+            continue;
+        }
+        index += 1;
+        skip_header_whitespace(&chars, &mut index);
+
+        let value = parse_header_value(&chars, &mut index);
+        if !key.trim().is_empty() {
+            headers.push((key, value));
+        }
+
+        while index < chars.len() && chars[index] != ',' {
+            index += 1;
+        }
+    }
+
+    headers
+}
+
+fn parse_header_key(chars: &[char], index: &mut usize) -> Option<String> {
+    if matches!(chars.get(*index), Some('\'') | Some('"')) {
+        return parse_quoted_header_value(chars, index);
+    }
+
+    let start = *index;
+    while *index < chars.len() && chars[*index] != ':' {
+        *index += 1;
+    }
+    let key = chars[start..*index]
+        .iter()
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if key.is_empty() {
+        None
+    } else {
+        Some(key)
+    }
+}
+
+fn parse_header_value(chars: &[char], index: &mut usize) -> String {
+    if matches!(chars.get(*index), Some('\'') | Some('"')) {
+        return parse_quoted_header_value(chars, index).unwrap_or_default();
+    }
+
+    let start = *index;
+    while *index < chars.len() && chars[*index] != ',' {
+        *index += 1;
+    }
+    chars[start..*index]
+        .iter()
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+fn parse_quoted_header_value(chars: &[char], index: &mut usize) -> Option<String> {
+    let quote = *chars.get(*index)?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    *index += 1;
+
+    let mut out = String::new();
+    while *index < chars.len() {
+        let ch = chars[*index];
+        *index += 1;
+        if ch == quote {
+            return Some(out);
+        }
+        if ch == '\\' {
+            if let Some(escaped) = chars.get(*index).copied() {
+                *index += 1;
+                out.push(match escaped {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    other => other,
+                });
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+
+    Some(out)
+}
+
+fn skip_header_separators(chars: &[char], index: &mut usize) {
+    while *index < chars.len() && (chars[*index].is_whitespace() || chars[*index] == ',') {
+        *index += 1;
+    }
+}
+
+fn skip_header_whitespace(chars: &[char], index: &mut usize) {
+    while *index < chars.len() && chars[*index].is_whitespace() {
+        *index += 1;
+    }
 }
 
 fn analyze_url(

@@ -1,5 +1,6 @@
 import http from './http'
 import type { SearchBook } from '../types'
+import { appendAuthQueryParams } from '../utils/secureAccess'
 
 export function searchBookMulti(params: {
   key: string
@@ -28,8 +29,7 @@ export function searchBookMultiSSE(params: {
   if (params.concurrentCount) query.set('concurrentCount', String(params.concurrentCount))
   if (params.searchSize) query.set('searchSize', String(params.searchSize))
 
-  const token = localStorage.getItem('accessToken')
-  if (token) query.set('accessToken', token)
+  appendAuthQueryParams(query)
 
   return new EventSource(`/reader3/searchBookMultiSSE?${query.toString()}`)
 }
@@ -46,8 +46,57 @@ export function getAvailableBookSource(params: {
   url?: string
   name?: string
   author?: string
+  origin?: string
+  refresh?: number
+  lastIndex?: number
+  resultLimit?: number
+  concurrentCount?: number
 }) {
-  return http.post<SearchBook[]>('/getAvailableBookSource', params).then((r) => r.data)
+  return http
+    .post<SearchBook[] | AvailableBookSourceResult>('/getAvailableBookSource', params)
+    .then((r) => normalizeAvailableBookSourceResult(r.data))
+}
+
+export function getAvailableBookSourceSSE(params: {
+  url?: string
+  name?: string
+  author?: string
+  origin?: string
+  refresh?: number
+  lastIndex?: number
+  concurrentCount?: number
+}) {
+  const query = new URLSearchParams()
+  if (params.url) query.set('url', params.url)
+  if (params.name) query.set('name', params.name)
+  if (params.author) query.set('author', params.author)
+  if (params.origin) query.set('origin', params.origin)
+  if (typeof params.refresh !== 'undefined') query.set('refresh', String(params.refresh))
+  query.set('lastIndex', String(params.lastIndex ?? -1))
+  query.set('concurrentCount', String(params.concurrentCount ?? 8))
+
+  appendAuthQueryParams(query)
+
+  return new EventSource(`/reader3/getAvailableBookSourceSSE?${query.toString()}`)
+}
+
+export interface AvailableBookSourceResult {
+  books: SearchBook[]
+  lastIndex: number
+  hasMore: boolean
+}
+
+function normalizeAvailableBookSourceResult(
+  data: SearchBook[] | AvailableBookSourceResult,
+): AvailableBookSourceResult {
+  if (Array.isArray(data)) {
+    return {
+      books: data,
+      lastIndex: data.length - 1,
+      hasMore: false,
+    }
+  }
+  return data
 }
 
 export function searchBookSourceSSE(params: {
@@ -66,8 +115,7 @@ export function searchBookSourceSSE(params: {
   if (params.bookSourceGroup !== undefined) query.set('bookSourceGroup', params.bookSourceGroup)
   if (params.searchSize) query.set('searchSize', String(params.searchSize))
 
-  const token = localStorage.getItem('accessToken')
-  if (token) query.set('accessToken', token)
+  appendAuthQueryParams(query)
 
   return new EventSource(`/reader3/searchBookSourceSSE?${query.toString()}`)
 }

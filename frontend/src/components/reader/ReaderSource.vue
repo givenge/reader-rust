@@ -34,7 +34,7 @@
 
       <div class="section-label">其他可用源</div>
       
-      <div v-if="searching" class="loading">
+      <div v-if="searching && !preparedResults.length" class="loading">
         <div class="spinner"></div>
         正在全网搜索同名书籍...
       </div>
@@ -72,6 +72,11 @@
         </div>
       </div>
 
+      <div v-if="searching && preparedResults.length" class="inline-loading">
+        <div class="spinner small"></div>
+        继续搜索其他书源...
+      </div>
+
       <div v-if="selectedCandidate" class="compare-panel">
         <div class="compare-header">
           <h4>书源对照</h4>
@@ -97,7 +102,7 @@
         </div>
       </div>
 
-      <div v-if="preparedResults.length" class="load-more-wrap">
+      <div v-if="hasMoreSources && !searching" class="load-more-wrap">
         <button class="load-more-btn" :disabled="loadingMore" @click="loadMoreSources">
           {{ loadingMore ? '加载中...' : '加载更多' }}
         </button>
@@ -118,7 +123,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useReaderStore } from '../../stores/reader'
 import { useAppStore } from '../../stores/app'
-import { getAvailableBookSource, searchBookSourceSSE } from '../../api/search'
+import { getAvailableBookSourceSSE } from '../../api/search'
 import { getBookInfo } from '../../api/bookshelf'
 import type { Book, SearchBook } from '../../types'
 
@@ -138,9 +143,11 @@ const searching = ref(false)
 const loadingMore = ref(false)
 const results = ref<SearchBook[]>([])
 const lastIndex = ref(-1)
+const hasMoreSources = ref(true)
 const selectedCandidate = ref<CandidateItem | null>(null)
 const candidatePreview = ref<Book | null>(null)
-let sourceSSE: EventSource | null = null
+const AVAILABLE_CONCURRENT_COUNT = 8
+let availableSourceSSE: EventSource | null = null
 
 const currentSource = computed(() => {
   if (!store.book) return null
@@ -157,16 +164,20 @@ function normalizeText(value?: string) {
     .toLowerCase()
 }
 
+function normalizeAuthorText(value?: string) {
+  return normalizeText(value).replace(/^作者/, '')
+}
+
 const preparedResults = computed<CandidateItem[]>(() => {
   if (!store.book) return []
   const currentName = normalizeText(store.book.name)
-  const currentAuthor = normalizeText(store.book.author)
+  const currentAuthor = normalizeAuthorText(store.book.author)
   const currentLatest = normalizeText(store.book.latestChapterTitle || store.currentChapter?.title)
 
   return results.value
     .map((book) => {
       const sameName = normalizeText(book.name) === currentName
-      const sameAuthor = normalizeText(book.author) === currentAuthor
+      const sameAuthor = normalizeAuthorText(book.author) === currentAuthor
       const sameLatest = !!currentLatest && normalizeText(book.lastChapter) === currentLatest
       const chapterHint = sameLatest
         ? '可无缝续读'
@@ -182,46 +193,30 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  stopLoadMore()
+  closeAvailableSourceSSE()
 })
 
-async function startSearch() {
+function startSearch() {
   if (!store.book) return
+  closeAvailableSourceSSE()
   searching.value = true
+  loadingMore.value = false
   results.value = []
   lastIndex.value = -1
+  hasMoreSources.value = true
+  selectedCandidate.value = null
+  candidatePreview.value = null
 
-  try {
-    const candidates = await getAvailableBookSource({
-      url: store.book.bookUrl,
-      name: store.book.name,
-      author: store.book.author,
-    })
-    mergeCandidates(candidates)
-    lastIndex.value = Math.max(lastIndex.value, candidates.length - 1)
-  } catch (e) {
-    console.error('getAvailableBookSource failed', e)
-  } finally {
-    searching.value = false
-    if (preparedResults.value.length) {
-      void selectCandidate(preparedResults.value[0])
-    }
-  }
-}
-
-function stopLoadMore() {
-  if (sourceSSE) {
-    sourceSSE.close()
-    sourceSSE = null
-  }
+  openAvailableSourceSSE('initial')
 }
 
 function mergeCandidates(candidates: SearchBook[]) {
   if (!store.book || !candidates.length) return
   const currentBook = store.book
+  const currentAuthor = normalizeAuthorText(currentBook.author)
   candidates.forEach((item) => {
     if (item.origin === currentBook.origin) return
-    if (currentBook.author && item.author && item.author !== currentBook.author) return
+    if (currentAuthor && item.author && normalizeAuthorText(item.author) !== currentAuthor) return
     const existed = results.value.some((candidate) =>
       candidate.origin === item.origin || (candidate.bookUrl === item.bookUrl && candidate.origin === item.origin),
     )
@@ -229,6 +224,119 @@ function mergeCandidates(candidates: SearchBook[]) {
       results.value.push(item)
     }
   })
+}
+
+type AvailableSourceMode = 'initial' | 'loadMore'
+type AvailableSourceSSEPayload = {
+  data?: SearchBook[]
+  books?: SearchBook[]
+  lastIndex?: number
+  hasMore?: boolean
+}
+
+function closeAvailableSourceSSE() {
+  if (!availableSourceSSE) return
+  availableSourceSSE.close()
+  availableSourceSSE = null
+}
+
+function parseAvailableSourcePayload(event: MessageEvent): AvailableSourceSSEPayload | null {
+  try {
+    return JSON.parse(event.data) as AvailableSourceSSEPayload
+  } catch (error) {
+    console.error('parse getAvailableBookSourceSSE payload failed', error)
+    return null
+  }
+}
+
+function applyAvailableSourcePayload(payload: AvailableSourceSSEPayload | null) {
+  if (!payload) return
+  const incoming = Array.isArray(payload.data)
+    ? payload.data
+    : (Array.isArray(payload.books) ? payload.books : [])
+
+  if (typeof payload.lastIndex === 'number') {
+    lastIndex.value = payload.lastIndex
+  }
+  if (typeof payload.hasMore === 'boolean') {
+    hasMoreSources.value = payload.hasMore
+  }
+  mergeCandidates(incoming)
+
+  if (!selectedCandidate.value && preparedResults.value.length) {
+    void selectCandidate(preparedResults.value[0])
+  }
+}
+
+function openAvailableSourceSSE(mode: AvailableSourceMode) {
+  if (!store.book) return
+
+  const beforeCount = results.value.length
+  const stream = getAvailableBookSourceSSE({
+    url: store.book.bookUrl,
+    name: store.book.name,
+    author: store.book.author,
+    origin: store.book.origin,
+    lastIndex: mode === 'loadMore' ? lastIndex.value : -1,
+    concurrentCount: AVAILABLE_CONCURRENT_COUNT,
+  })
+  availableSourceSSE = stream
+
+  stream.onmessage = (event) => {
+    if (availableSourceSSE !== stream) return
+    applyAvailableSourcePayload(parseAvailableSourcePayload(event))
+  }
+
+  stream.addEventListener('end', (event) => {
+    if (availableSourceSSE !== stream) return
+    applyAvailableSourcePayload(parseAvailableSourcePayload(event as MessageEvent))
+    finishAvailableSourceSSE(stream, mode, beforeCount)
+  })
+
+  stream.onerror = (event) => {
+    if (availableSourceSSE !== stream) return
+    console.error('getAvailableBookSourceSSE failed', event)
+    finishAvailableSourceSSE(stream, mode, beforeCount, true)
+  }
+}
+
+function finishAvailableSourceSSE(
+  stream: EventSource,
+  mode: AvailableSourceMode,
+  beforeCount: number,
+  failed = false,
+) {
+  if (availableSourceSSE !== stream) return
+  stream.close()
+  availableSourceSSE = null
+
+  if (mode === 'initial') {
+    searching.value = false
+  } else {
+    loadingMore.value = false
+  }
+
+  if (!selectedCandidate.value && preparedResults.value.length) {
+    void selectCandidate(preparedResults.value[0])
+  }
+
+  if (failed) {
+    if (mode === 'loadMore') {
+      appStore.showToast('加载更多书源失败', 'error')
+    }
+    return
+  }
+
+  if (mode === 'loadMore') {
+    const addedCount = results.value.length - beforeCount
+    if (addedCount > 0) {
+      appStore.showToast(`已新增 ${addedCount} 个书源`, 'success')
+    } else if (!hasMoreSources.value) {
+      appStore.showToast('没有更多书源了', 'warning')
+    } else {
+      appStore.showToast('本批次未找到更多匹配书源', 'warning')
+    }
+  }
 }
 
 async function selectCandidate(item: CandidateItem) {
@@ -242,58 +350,11 @@ async function selectCandidate(item: CandidateItem) {
 }
 
 function loadMoreSources() {
-  if (!store.book || loadingMore.value) return
+  if (!store.book || loadingMore.value || !hasMoreSources.value) return
 
-  stopLoadMore()
+  closeAvailableSourceSSE()
   loadingMore.value = true
-  const beforeCount = results.value.length
-  sourceSSE = searchBookSourceSSE({
-    concurrentCount: 24,
-    url: store.book.bookUrl,
-    bookSourceGroup: '',
-    lastIndex: lastIndex.value,
-  })
-
-  sourceSSE.onmessage = (event) => {
-    try {
-      const payload = JSON.parse(event.data)
-      if (typeof payload.lastIndex === 'number') {
-        lastIndex.value = payload.lastIndex
-      }
-      const batch = Array.isArray(payload?.data) ? payload.data : []
-      if (batch.length) {
-        mergeCandidates(batch)
-      }
-    } catch (error) {
-      console.error('searchBookSourceSSE message parse failed', error)
-    }
-  }
-
-  sourceSSE.addEventListener('end', (event) => {
-    const afterCount = results.value.length
-    try {
-      const payload = JSON.parse((event as MessageEvent).data)
-      if (typeof payload.lastIndex === 'number') {
-        lastIndex.value = payload.lastIndex
-      }
-    } catch {
-      //
-    }
-    loadingMore.value = false
-    stopLoadMore()
-    if (afterCount > beforeCount) {
-      appStore.showToast(`已新增 ${afterCount - beforeCount} 个书源`, 'success')
-    } else {
-      appStore.showToast('没有更多书源了', 'warning')
-    }
-  })
-
-  sourceSSE.addEventListener('error', (event) => {
-    console.error('searchBookSourceSSE failed', event)
-    loadingMore.value = false
-    stopLoadMore()
-    appStore.showToast('加载更多书源失败', 'error')
-  })
+  openAvailableSourceSSE('loadMore')
 }
 
 async function handleSwitch(res: SearchBook) {
@@ -603,6 +664,16 @@ async function handleSwitch(res: SearchBook) {
   font-size: 14px;
 }
 
+.inline-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  font-size: 12px;
+  opacity: 0.55;
+}
+
 .load-more-wrap {
   padding: 16px 20px 24px;
   display: flex;
@@ -638,6 +709,14 @@ async function handleSwitch(res: SearchBook) {
   border-radius: 50%;
   animation: spin 1s linear infinite;
   margin: 0 auto 12px;
+}
+
+.inline-loading .spinner,
+.spinner.small {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border-width: 2px;
 }
 
 @keyframes spin { to { transform: rotate(360deg); } }

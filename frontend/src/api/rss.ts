@@ -17,6 +17,10 @@ export function deleteRssSource(source: Pick<RssSource, 'sourceUrl' | 'sourceNam
   return http.post<string>('/deleteRssSource', source).then((r) => r.data)
 }
 
+export function deleteRssSources(sources: Pick<RssSource, 'sourceUrl' | 'sourceName'>[]) {
+  return http.post<{ deleted: number }>('/deleteRssSources', sources).then((r) => r.data)
+}
+
 export function getRssArticles(params: {
   sourceUrl: string
   sortName?: string

@@ -3,6 +3,7 @@ import { ref, watch, computed } from 'vue'
 import { getUserInfo } from '../api/user'
 import type { UserInfo } from '../types'
 import { applySystemTheme } from '../utils/systemUi'
+import { computeNeedSecureKey, readStoredSecureKey, SECURE_KEY_STORAGE_KEY } from '../utils/secureAccess'
 
 export const useAppStore = defineStore('app', () => {
   const STATS_KEY = 'reader-stats'
@@ -32,14 +33,23 @@ export const useAppStore = defineStore('app', () => {
   const userInfo = ref<UserInfo | null>(null)
   const isSecureMode = ref(false)
   const needSecureKey = ref(false)
+  const secureKeyRequired = ref(false)
+  const adminAuthorized = ref(false)
   const isLoggedIn = ref(false)
+  const secureKey = ref(readStoredSecureKey())
 
   async function fetchUserInfo() {
     try {
       const data = await getUserInfo()
       userInfo.value = data.userInfo
       isSecureMode.value = data.secure
-      needSecureKey.value = data.secureKey
+      secureKeyRequired.value = data.secureKeyRequired
+      adminAuthorized.value = data.adminAuthorized
+      needSecureKey.value = computeNeedSecureKey({
+        secure: data.secure,
+        secureKeyRequired: data.secureKeyRequired,
+        adminAuthorized: data.adminAuthorized,
+      })
       isLoggedIn.value = !!data.userInfo?.username
     } catch {
       isLoggedIn.value = false
@@ -56,6 +66,16 @@ export const useAppStore = defineStore('app', () => {
     userInfo.value = null
     isLoggedIn.value = false
     localStorage.removeItem('accessToken')
+  }
+
+  function setSecureKey(value: string) {
+    const next = value.trim()
+    secureKey.value = next
+    if (next) {
+      localStorage.setItem(SECURE_KEY_STORAGE_KEY, next)
+    } else {
+      localStorage.removeItem(SECURE_KEY_STORAGE_KEY)
+    }
   }
 
   function updateUserInfo(next: UserInfo | null) {
@@ -186,8 +206,8 @@ export const useAppStore = defineStore('app', () => {
 
   return {
     theme, setTheme, toggleTheme,
-    userInfo, isSecureMode, needSecureKey, isLoggedIn,
-    fetchUserInfo, setUser, clearUser, updateUserInfo,
+    userInfo, isSecureMode, needSecureKey, secureKeyRequired, adminAuthorized, secureKey, isLoggedIn,
+    fetchUserInfo, setUser, clearUser, setSecureKey, updateUserInfo,
     showLoginModal, showSettingsDrawer, showSourceManager, showUserManager, showWebdavManager,
     isOnline, pwaReady, pwaUpdateAvailable, deferredInstallPrompt, waitingServiceWorker,
     setOnlineStatus, setPwaReady, setPwaUpdateAvailable, setDeferredInstallPrompt, setWaitingServiceWorker, installPwa, applyPwaUpdate,

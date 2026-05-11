@@ -1,4 +1,5 @@
 import http from './http'
+import { appendAuthQueryParams } from '../utils/secureAccess'
 
 /**
  * SSE-based book caching. Returns an EventSource.
@@ -17,8 +18,7 @@ export function cacheBookSSE(params: {
   if (params.refresh) query.set('refresh', String(params.refresh))
   if (params.concurrentCount) query.set('concurrentCount', String(params.concurrentCount))
 
-  const token = localStorage.getItem('accessToken')
-  if (token) query.set('accessToken', token)
+  appendAuthQueryParams(query)
 
   return new EventSource(`/reader3/cacheBookSSE?${query.toString()}`)
 }

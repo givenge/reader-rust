@@ -5,7 +5,7 @@
         <h2>发现书海</h2>
         <!-- 顶部：书源切换 -->
         <div class="source-selector">
-          <select v-model="store.activeSourceUrl" @change="onSourceChange" v-if="store.exploreSources.length > 0">
+          <select :value="store.activeSourceUrl" @change="onSourceChange" v-if="store.exploreSources.length > 0">
             <option
               v-for="src in store.exploreSources"
               :key="src.bookSourceUrl"
@@ -24,11 +24,14 @@
       <div class="categories-panel">
         <div class="categories-scroll">
           <div
-            v-for="cat in store.categories"
-            :key="cat.url"
+            v-for="(cat, index) in store.categories"
+            :key="getExploreCategoryKey(cat, index)"
             class="category-tag"
-            :class="{ active: store.activeCategoryUrl === cat.url }"
-            @click="store.setCategory(cat.url)"
+            :class="{
+              active: !isExploreCategorySection(cat) && store.activeCategoryUrl === cat.url,
+              section: isExploreCategorySection(cat),
+            }"
+            @click="handleCategoryClick(cat)"
           >
             {{ cat.title }}
           </div>
@@ -64,7 +67,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useExploreStore } from '../stores/explore'
 import { useReaderStore } from '../stores/reader'
@@ -72,6 +75,11 @@ import { saveBook } from '../api/bookshelf'
 import { useAppStore } from '../stores/app'
 import BookGrid from '../components/BookGrid.vue'
 import type { Book, SearchBook } from '../types'
+import {
+  getExploreCategoryKey,
+  isExploreCategorySection,
+  type ExploreCategory,
+} from '../utils/exploreCategories'
 
 const store = useExploreStore()
 const readerStore = useReaderStore()
@@ -85,14 +93,8 @@ onMounted(async () => {
   await store.init()
 })
 
-watch(() => store.activeSourceUrl, (newVal) => {
-  if (newVal) {
-    store.setSource(newVal)
-  }
-})
-
-function onSourceChange() {
-  store.setSource(store.activeSourceUrl)
+function onSourceChange(event: Event) {
+  store.setSource((event.target as HTMLSelectElement).value)
 }
 
 function handleScroll() {
@@ -103,6 +105,11 @@ function handleScroll() {
   if (scrollTop + clientHeight >= scrollHeight - 100) {
     store.fetchMore()
   }
+}
+
+function handleCategoryClick(category: ExploreCategory) {
+  if (isExploreCategorySection(category)) return
+  store.setCategory(category.url)
 }
 
 async function handleBookClick(book: Book | SearchBook) {
@@ -212,7 +219,12 @@ async function handleAddToShelf(book: Book | SearchBook) {
   transition: all 0.2s;
 }
 
-.category-tag:hover {
+.category-tag.section {
+  cursor: default;
+  color: var(--color-text-tertiary);
+}
+
+.category-tag:hover:not(.section) {
   background: var(--color-bg-hover);
 }
 

@@ -1,6 +1,8 @@
 use crate::util::hash::md5_hex;
 use crate::util::text::{apply_regex_replace, strip_whitespace};
+use aes::Aes128;
 use base64::Engine;
+use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
 use chrono::{Local, TimeZone};
 use once_cell::sync::Lazy;
 use reqwest::blocking::Client;
@@ -34,6 +36,7 @@ static JS_DEVICE_ID: Lazy<String> = Lazy::new(|| {
     map.insert("__device_id".to_string(), generated.clone());
     generated
 });
+type Aes128CbcDecryptor = cbc::Decryptor<Aes128>;
 thread_local! {
     static ACTIVE_JS_LIB: RefCell<Option<String>> = const { RefCell::new(None) };
 }
@@ -213,6 +216,14 @@ fn eval_js_inner_with_source(
             }),
         )?;
         java_obj.set(
+            "aesBase64DecodeToString",
+            Func::new(
+                |input: String, key: String, algorithm: String, iv: String| -> String {
+                    java_aes_base64_decode_to_string(&input, &key, &algorithm, &iv)
+                },
+            ),
+        )?;
+        java_obj.set(
             "encodeURIComponent",
             Func::new(|input: String| -> String { urlencoding::encode(&input).into_owned() }),
         )?;
@@ -308,6 +319,27 @@ fn eval_js_inner_with_source(
         };
         Ok(result)
     })
+}
+
+fn java_aes_base64_decode_to_string(input: &str, key: &str, algorithm: &str, iv: &str) -> String {
+    let algorithm = algorithm.to_ascii_uppercase();
+    if algorithm != "AES/CBC/PKCS5PADDING" && algorithm != "AES/CBC/PKCS7PADDING" {
+        return String::new();
+    }
+
+    let Ok(mut encrypted) = base64::engine::general_purpose::STANDARD.decode(input.trim()) else {
+        return String::new();
+    };
+
+    let Ok(cipher) = Aes128CbcDecryptor::new_from_slices(key.as_bytes(), iv.as_bytes()) else {
+        return String::new();
+    };
+
+    cipher
+        .decrypt_padded_mut::<Pkcs7>(&mut encrypted)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes.to_vec()).ok())
+        .unwrap_or_default()
 }
 
 fn eval_script<'js>(ctx: rquickjs::Ctx<'js>, script: &str) -> anyhow::Result<Value<'js>> {

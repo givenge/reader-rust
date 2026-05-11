@@ -232,7 +232,7 @@ const createForm = reactive({
 })
 
 const currentUsername = computed(() => appStore.userInfo?.username || '')
-const canManageUsers = computed(() => appStore.isSecureMode && appStore.isLoggedIn && !!appStore.userInfo?.isAdmin && !appStore.needSecureKey)
+const canManageUsers = computed(() => appStore.isSecureMode && appStore.adminAuthorized)
 const adminCount = computed(() => users.value.filter((user) => user.isAdmin).length)
 const backupEnabledCount = computed(() => users.value.filter((user) => user.enableWebdav).length)
 const localStoreEnabledCount = computed(() => users.value.filter((user) => user.enableLocalStore).length)
@@ -259,6 +259,7 @@ const filteredUsers = computed(() => {
 
 const unavailableTitle = computed(() => {
   if (!appStore.isSecureMode) return '当前未开启安全模式'
+  if (appStore.adminAuthorized) return '当前已具备管理员权限'
   if (!appStore.isLoggedIn) return '需要先登录管理员账号'
   if (appStore.needSecureKey) return '当前需要管理密码'
   return '当前账号没有用户管理权限'
@@ -266,6 +267,7 @@ const unavailableTitle = computed(() => {
 
 const unavailableMessage = computed(() => {
   if (!appStore.isSecureMode) return '用户管理仅在多用户安全模式下可用。'
+  if (appStore.adminAuthorized) return '当前请求已通过管理员权限校验。'
   if (!appStore.isLoggedIn) return '登录管理员账号后，才能管理其他用户。'
   if (appStore.needSecureKey) return '当前服务端已开启管理密码校验，先输入管理密码后才能读取和修改用户列表。'
   return '请使用管理员账号登录后再试。'

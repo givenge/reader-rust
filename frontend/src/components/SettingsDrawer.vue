@@ -67,6 +67,36 @@
           <section class="drawer-section">
             <h3 class="section-title">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+                <path d="M12 3a4 4 0 0 0-4 4v2H7a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a4 4 0 0 0-4-4Z" />
+                <path d="M9 9V7a3 3 0 0 1 6 0v2" />
+              </svg>
+              管理密码
+            </h3>
+            <div class="status-card">
+              <span>{{ appStore.secureKeyRequired ? '服务端已配置管理密码' : '服务端未配置管理密码' }}</span>
+              <small>
+                {{
+                  appStore.secureKeyRequired
+                    ? (appStore.adminAuthorized ? '当前请求已具备管理员权限。' : '保存后会随请求自动附带 X-Secure-Key。')
+                    : '未配置时只依赖管理员账号登录态。'
+                }}
+              </small>
+            </div>
+            <div class="password-panel embedded">
+              <label class="password-field">
+                <span>管理密码</span>
+                <input v-model="secureKeyInput" type="password" autocomplete="off" placeholder="输入服务端 SECURE_KEY" />
+              </label>
+              <div class="password-actions">
+                <button class="action-btn primary" @click="handleSaveSecureKey">保存管理密码</button>
+                <button class="action-btn" :disabled="!appStore.secureKey" @click="handleClearSecureKey">清除</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="drawer-section">
+            <h3 class="section-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
                 <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
               </svg>
               &#20070;&#28304;&#31649;&#29702;
@@ -247,7 +277,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useAppStore } from '../stores/app'
 import { useBookshelfStore } from '../stores/bookshelf'
 import { changePassword, logout as apiLogout } from '../api/user'
@@ -265,19 +295,22 @@ const shelfStore = useBookshelfStore()
 const appVersion = __APP_VERSION__
 const showPasswordPanel = ref(false)
 const changingPassword = ref(false)
+const secureKeyInput = ref(appStore.secureKey)
 const passwordForm = reactive({
   oldPassword: '',
   newPassword: '',
   confirmPassword: '',
 })
 
-const canManageUsers = computed(() => appStore.isSecureMode && appStore.isLoggedIn && !!appStore.userInfo?.isAdmin && !appStore.needSecureKey)
+const canManageUsers = computed(() => appStore.isSecureMode && appStore.adminAuthorized)
 const userManagerTitle = computed(() => {
+  if (appStore.adminAuthorized) return '\u5f53\u524d\u8bf7\u6c42\u5df2\u5177\u5907\u7ba1\u7406\u5458\u6743\u9650'
   if (!appStore.isLoggedIn) return '\u767b\u5f55\u540e\u53ef\u67e5\u770b\u72b6\u6001'
   if (appStore.needSecureKey) return '\u5f53\u524d\u9700\u8981\u7ba1\u7406\u5bc6\u7801'
   return appStore.userInfo?.isAdmin ? '\u5f53\u524d\u8d26\u53f7\u62e5\u6709\u7ba1\u7406\u5458\u6743\u9650' : '\u5f53\u524d\u8d26\u53f7\u4e0d\u662f\u7ba1\u7406\u5458'
 })
 const userManagerMessage = computed(() => {
+  if (appStore.adminAuthorized) return '\u5df2\u7ecf\u901a\u8fc7\u7ba1\u7406\u5458\u6743\u9650\u6821\u9a8c\uff0c\u53ef\u8bfb\u53d6\u5e76\u4fee\u6539\u7528\u6237\u5217\u8868\u3002'
   if (!appStore.isLoggedIn) return '\u8bf7\u5148\u767b\u5f55\u7ba1\u7406\u5458\u8d26\u53f7\u540e\u7ba1\u7406\u5176\u4ed6\u7528\u6237\u3002'
   if (appStore.needSecureKey) return '\u670d\u52a1\u7aef\u5df2\u5f00\u542f\u7ba1\u7406\u5bc6\u7801\u6821\u9a8c\uff0c\u672a\u9a8c\u8bc1\u524d\u65e0\u6cd5\u8bfb\u53d6\u7528\u6237\u5217\u8868\u3002'
   return appStore.userInfo?.isAdmin
@@ -298,6 +331,13 @@ const webdavStatusMessage = computed(() => {
     : '\u8bf7\u5728\u7528\u6237\u7ba1\u7406\u4e2d\u4e3a\u5f53\u524d\u8d26\u53f7\u5f00\u542f\u670d\u52a1\u5668\u5907\u4efd\u6743\u9650\u3002'
 })
 
+watch(
+  () => appStore.secureKey,
+  (value) => {
+    secureKeyInput.value = value
+  },
+)
+
 function close() {
   emit('update:modelValue', false)
 }
@@ -310,8 +350,22 @@ function handleLogin() {
 async function handleLogout() {
   await apiLogout()
   appStore.clearUser()
+  await appStore.fetchUserInfo()
   close()
   shelfStore.fetchBooks()
+}
+
+async function handleSaveSecureKey() {
+  appStore.setSecureKey(secureKeyInput.value)
+  await appStore.fetchUserInfo()
+  appStore.showToast(appStore.adminAuthorized ? '管理密码已生效' : '管理密码已保存，但当前仍未通过管理员校验', appStore.adminAuthorized ? 'success' : 'warning')
+}
+
+async function handleClearSecureKey() {
+  secureKeyInput.value = ''
+  appStore.setSecureKey('')
+  await appStore.fetchUserInfo()
+  appStore.showToast('已清除管理密码', 'success')
 }
 
 function resetPasswordForm() {

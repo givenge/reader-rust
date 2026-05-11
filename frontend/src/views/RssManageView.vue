@@ -3,7 +3,7 @@
     <header class="rss-manage-hero">
       <div>
         <h1>RSS 源管理</h1>
-        <p>在这里导入、导出、创建和编辑 RSS 源配置。</p>
+        <p>共 {{ store.sources.length }} 个，已启用 {{ enabledCount }} 个，当前筛选 {{ filteredSources.length }} 个。</p>
       </div>
       <div class="rss-manage-actions">
         <button class="ghost-btn" @click="goBack">返回 RSS</button>
@@ -19,13 +19,29 @@
         <button class="tool-btn" @click="importRemoteJson">远程导入 JSON</button>
       </div>
       <button class="tool-btn" :class="{ primary: !editingSource }" @click="createSource">新增 RSS 源</button>
+      <button class="tool-btn danger" :disabled="!selectedFilteredSources.length" @click="handleBulkDelete">
+        批量删除{{ selectedFilteredSources.length ? ` (${selectedFilteredSources.length})` : '' }}
+      </button>
       <input ref="fileInputRef" type="file" accept=".json,.txt" class="hidden-input" @change="handleFileImport" />
     </section>
 
     <section class="rss-manage-layout">
       <aside class="rss-sources">
-        <div class="panel-title">RSS 源 ({{ filteredSources.length }})</div>
+        <div class="panel-title-row compact">
+          <div class="panel-title">RSS 源 ({{ filteredSources.length }})</div>
+          <button v-if="selectedFilteredSources.length" class="mini-btn" @click="clearSelection">清空选择</button>
+        </div>
         <div class="filter-row">
+          <label class="bulk-check" :class="{ muted: !filteredSources.length }">
+            <input
+              type="checkbox"
+              :checked="allFilteredSelected"
+              :disabled="!filteredSources.length"
+              :aria-checked="partiallyFilteredSelected ? 'mixed' : allFilteredSelected"
+              @change="toggleFilteredSelection"
+            />
+            <span>{{ allFilteredSelected ? '取消全选' : '全选当前' }}</span>
+          </label>
           <input v-model.trim="filterText" placeholder="搜索源名称或链接" />
           <select v-model="filterGroup">
             <option value="">全部分组</option>
@@ -33,14 +49,30 @@
           </select>
         </div>
 
-        <div v-if="!store.sources.length" class="empty-box">暂无 RSS 源</div>
-        <button
+        <div v-if="!filteredSources.length" class="empty-box">
+          {{ store.sources.length ? '没有匹配的 RSS 源' : '暂无 RSS 源' }}
+        </div>
+        <div
           v-for="source in filteredSources"
           :key="source.sourceUrl"
           class="source-item"
-          :class="{ active: editingSource?.sourceUrl === source.sourceUrl }"
+          role="button"
+          tabindex="0"
+          :class="{
+            active: editingSource?.sourceUrl === source.sourceUrl,
+            selected: selectedSourceUrls.has(source.sourceUrl),
+          }"
           @click="editSource(source)"
+          @keydown.enter="editSource(source)"
+          @keydown.space.prevent="editSource(source)"
         >
+          <label class="row-check" @click.stop>
+            <input
+              type="checkbox"
+              :checked="selectedSourceUrls.has(source.sourceUrl)"
+              @change="toggleSourceSelection(source)"
+            />
+          </label>
           <div class="source-main">
             <div class="source-name-row">
               <span class="source-name">{{ source.sourceName }}</span>
@@ -55,7 +87,11 @@
             </label>
             <button class="mini-btn danger" @click.stop="handleDelete(source)">删除</button>
           </div>
-        </button>
+        </div>
+        <div v-if="selectedFilteredSources.length" class="bulk-action-card">
+          <span>已选择 {{ selectedFilteredSources.length }} 个当前结果</span>
+          <button class="mini-btn danger" @click="handleBulkDelete">删除选中</button>
+        </div>
       </aside>
 
       <section class="rss-editor">
@@ -195,12 +231,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { readRemoteRssSourceFile, readRssSourceFile, saveRssSource } from '../api/rss'
 import { useAppStore } from '../stores/app'
 import { useRssStore } from '../stores/rss'
 import type { RssSource } from '../types'
+import { getVisibleSelection } from '../utils/sourceSelection'
 
 const router = useRouter()
 const appStore = useAppStore()
@@ -212,6 +249,7 @@ const filterText = ref('')
 const filterGroup = ref('')
 const editingSource = ref<RssSource | null>(null)
 const formState = reactive<RssSource>(createEmptySource())
+const selectedSourceUrls = ref(new Set<string>())
 
 const groupList = computed(() => {
   const groups = new Set<string>()
@@ -242,6 +280,20 @@ const filteredSources = computed(() => {
   }
   return list
 })
+
+const selectedFilteredSources = computed(() =>
+  getVisibleSelection(filteredSources.value, selectedSourceUrls.value, (source) => source.sourceUrl)
+)
+
+const allFilteredSelected = computed(() =>
+  filteredSources.value.length > 0 && selectedFilteredSources.value.length === filteredSources.value.length
+)
+
+const partiallyFilteredSelected = computed(() =>
+  selectedFilteredSources.value.length > 0 && !allFilteredSelected.value
+)
+
+const enabledCount = computed(() => store.sources.filter((source) => source.enabled !== false).length)
 
 onMounted(async () => {
   await store.fetchSources()
@@ -360,10 +412,62 @@ async function toggleSource(source: RssSource) {
 async function handleDelete(source: RssSource) {
   if (!confirm(`确定删除 RSS 源 "${source.sourceName}"？`)) return
   await store.removeSource(source)
+  selectedSourceUrls.value.delete(source.sourceUrl)
   if (editingSource.value?.sourceUrl === source.sourceUrl) {
     createSource()
   }
   appStore.showToast('RSS 源已删除', 'success')
+}
+
+async function handleBulkDelete() {
+  const targets = selectedFilteredSources.value
+  if (!targets.length) {
+    appStore.showToast('请先选择要删除的 RSS 源', 'warning')
+    return
+  }
+  if (!confirm(`确定删除选中的 ${targets.length} 个 RSS 源？`)) return
+  try {
+    const targetUrls = new Set(targets.map((source) => source.sourceUrl))
+    const deleted = await store.removeSources(targets)
+    selectedSourceUrls.value.clear()
+    if (editingSource.value && targetUrls.has(editingSource.value.sourceUrl)) {
+      createSource()
+    }
+    appStore.showToast(`已删除 ${deleted || targets.length} 个 RSS 源`, 'success')
+  } catch (error) {
+    appStore.showToast((error as Error).message || '批量删除失败', 'error')
+  }
+}
+
+function toggleSourceSelection(source: RssSource) {
+  const selected = selectedSourceUrls.value
+  if (selected.has(source.sourceUrl)) {
+    selected.delete(source.sourceUrl)
+  } else {
+    selected.add(source.sourceUrl)
+  }
+}
+
+function toggleFilteredSelection() {
+  const selected = selectedSourceUrls.value
+  if (allFilteredSelected.value) {
+    filteredSources.value.forEach((source) => selected.delete(source.sourceUrl))
+    return
+  }
+  filteredSources.value.forEach((source) => selected.add(source.sourceUrl))
+}
+
+function clearSelection() {
+  selectedSourceUrls.value.clear()
+}
+
+function pruneSelection() {
+  const availableUrls = new Set(store.sources.map((source) => source.sourceUrl))
+  Array.from(selectedSourceUrls.value).forEach((url) => {
+    if (!availableUrls.has(url)) {
+      selectedSourceUrls.value.delete(url)
+    }
+  })
 }
 
 function triggerFileImport() {
@@ -418,6 +522,8 @@ function exportSources() {
   anchor.click()
   URL.revokeObjectURL(url)
 }
+
+watch(() => store.sources, pruneSelection)
 </script>
 
 <style scoped>
@@ -489,6 +595,33 @@ function exportSources() {
   background: var(--color-bg);
   border-radius: 12px;
   padding: 10px 12px;
+}
+
+.bulk-check,
+.row-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-secondary);
+  font-size: 13px;
+}
+
+.bulk-check {
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg);
+}
+
+.bulk-check.muted {
+  opacity: 0.5;
+}
+
+.bulk-check input,
+.row-check input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
 }
 
 .remote-input {
@@ -584,6 +717,23 @@ function exportSources() {
   margin-bottom: 12px;
 }
 
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.panel-title-row .panel-title {
+  margin-bottom: 0;
+}
+
+.panel-title-row.compact .mini-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
 .filter-row,
 .visual-form {
   display: grid;
@@ -620,8 +770,24 @@ function exportSources() {
   border-color: rgba(201, 127, 58, 0.2);
 }
 
+.tool-btn.danger {
+  background: rgba(245, 34, 45, 0.05);
+  color: var(--color-danger);
+  border-color: rgba(245, 34, 45, 0.18);
+}
+
+.tool-btn:disabled,
+.mini-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .source-item {
   width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
   text-align: left;
   border: 1px solid transparent;
   background: var(--color-bg);
@@ -636,7 +802,20 @@ function exportSources() {
   background: rgba(201, 127, 58, 0.08);
 }
 
+.source-item:focus-visible {
+  outline: 2px solid var(--color-primary-border);
+  outline-offset: 2px;
+}
+
+.source-item.selected {
+  border-color: rgba(201, 127, 58, 0.3);
+  background: rgba(201, 127, 58, 0.12);
+  box-shadow: inset 3px 0 0 var(--color-primary);
+}
+
 .source-main {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -669,13 +848,32 @@ function exportSources() {
 }
 
 .source-actions {
-  margin-top: 12px;
+  margin-top: 0;
+  min-width: 74px;
   justify-content: space-between;
   align-items: center;
 }
 
 .mini-btn.danger {
   color: var(--color-danger);
+}
+
+.bulk-action-card {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(201, 127, 58, 0.22);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--color-bg-elevated) 90%, var(--color-primary) 10%);
+  box-shadow: var(--shadow-sm);
+  color: var(--color-text-secondary);
+  font-size: 13px;
 }
 
 @media (max-width: 960px) {
@@ -694,6 +892,11 @@ function exportSources() {
 
   .remote-import-group {
     min-width: 100%;
+  }
+
+  .bulk-action-card {
+    align-items: stretch;
+    flex-direction: column;
   }
 }
 

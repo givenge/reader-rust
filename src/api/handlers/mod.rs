@@ -25,7 +25,7 @@ pub use replace_rule::{
     save_replace_rules,
 };
 pub use rss::{
-    delete_rss_source, get_rss_articles, get_rss_content, get_rss_sources,
+    delete_rss_source, delete_rss_sources, get_rss_articles, get_rss_content, get_rss_sources,
     read_remote_rss_source_file, read_rss_source_file, save_rss_source, save_rss_sources,
 };
 pub use user::{
