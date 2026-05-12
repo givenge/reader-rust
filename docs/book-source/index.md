@@ -101,10 +101,12 @@ replaceRegex
 
 - `{key}`：搜索关键词，会自动 URL 编码
 - `{page}`：页码
-- `{{ ... }}`：执行 JS 并把返回值插入 URL
+- <code v-pre>{{ ... }}</code>：执行 JS 并把返回值插入 URL
 - `, { ... }`：在 URL 后追加请求配置 JSON
 
 示例：
+
+::: v-pre
 
 ```json
 {
@@ -113,6 +115,8 @@ replaceRegex
   "loginUrl": "https://example.com/login,{\"method\":\"POST\",\"body\":\"a=1&b=2\",\"headers\":{\"Content-Type\":\"application/x-www-form-urlencoded\"}}"
 }
 ```
+
+:::
 
 ## 调试技巧
 

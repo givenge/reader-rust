@@ -61,6 +61,8 @@
 
 ### JSON API 示例
 
+::: v-pre
+
 ```json
 {
   "searchUrl": "https://api.example.com/search?q={key}&page={page}",
@@ -74,6 +76,8 @@
   }
 }
 ```
+
+:::
 
 ### 正则列表示例
 

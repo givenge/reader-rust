@@ -23,6 +23,7 @@ export default defineConfig({
             { text: '配置', link: '/guide/configuration' },
             { text: '功能特性', link: '/guide/features' },
             { text: '用户手册', link: '/guide/user-manual' },
+            { text: 'AI资料', link: '/guide/ai-book' },
             { text: '测试流程', link: '/guide/testing' }
           ]
         },

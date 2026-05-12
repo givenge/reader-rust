@@ -206,11 +206,13 @@ div.script-data@html@@a@href
 }
 ```
 
-### `{{ ... }}`
+### <code v-pre>{{ ... }}</code>
 
-`{{ ... }}` 会执行 JS 并把结果插回规则中。
+<code v-pre>{{ ... }}</code> 会执行 JS 并把结果插回规则中。
 
 在 JSON 规则中，还支持直接取当前项字段：
+
+::: v-pre
 
 ```json
 {
@@ -218,6 +220,8 @@ div.script-data@html@@a@href
   "coverUrl": "{{$.cover}}"
 }
 ```
+
+:::
 
 ## URL 参数
 
@@ -227,7 +231,7 @@ div.script-data@html@@a@href
 |--------|------|
 | `{key}` | 搜索关键词，自动 URL 编码 |
 | `{page}` | 页码 |
-| `{{...}}` | 执行 JS |
+| <code v-pre>{{...}}</code> | 执行 JS |
 
 示例：
 

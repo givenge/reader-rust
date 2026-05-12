@@ -92,11 +92,15 @@ input.split('\n').filter(Boolean)
 
 ### URL 规则
 
+::: v-pre
+
 ```json
 {
   "searchUrl": "/search?wd={{java.encodeURIComponent(key)}}&page={{page}}"
 }
 ```
+
+:::
 
 ### 目录标题格式化
 
