@@ -14,7 +14,8 @@
     "opencc-js": "^1.0.5",
     "pinia": "^3.0.4",
     "vue": "^3.5.30",
-    "vue-router": "^4.6.4"
+    "vue-router": "^4.6.4",
+    "jszip": "^3.10.1"
   },
   "devDependencies": {
     "@types/node": "^24.12.0",

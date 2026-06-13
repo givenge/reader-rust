@@ -35,8 +35,11 @@ pub use user::{
     get_user_list, login, logout, reset_password, save_user_config, update_user, upload_file,
 };
 pub use webdav::{
-    delete_webdav_file, delete_webdav_file_list, get_webdav_file, get_webdav_file_list,
-    upload_file_to_webdav, webdav_handler,
+    backup_to_remote_webdav, delete_webdav_file, delete_webdav_file_list,
+    get_remote_webdav_file_list, get_webdav_config, get_webdav_file,
+    get_webdav_file_list, restore_from_remote_webdav, save_webdav_config,
+    test_webdav_connection, upload_file_to_webdav, webdav_handler,
+    RemoteWebdavFileEntry,
 };
 
 use crate::error::error::ApiResponse;

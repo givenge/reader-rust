@@ -72,6 +72,7 @@ pub async fn run() -> anyhow::Result<()> {
         ai_book_service,
         ai_model_service,
         update_service,
+        webdav_config: std::sync::Mutex::new(std::collections::HashMap::new()),
     };
 
     let app: Router = api::router::build_router(state);

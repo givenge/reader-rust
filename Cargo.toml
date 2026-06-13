@@ -44,3 +44,4 @@ sxd-xpath = "0.4"
 sxd-document = "0.3"
 quick-xml = "0.31"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
+flate2 = { version = "1", features = ["default"] }

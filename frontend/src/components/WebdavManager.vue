@@ -23,6 +23,12 @@
             <span>{{ unavailableMessage }}</span>
           </div>
 
+          <!-- 标签页切换 -->
+          <div class="tabs" v-if="webdavAvailable">
+            <button :class="{ active: activeTab === 'local' }" @click="activeTab = 'local'">本地 WebDAV</button>
+            <button :class="{ active: activeTab === 'remote' }" @click="activeTab = 'remote'">远程 WebDAV 同步</button>
+          </div>
+
           <template v-else>
             <div class="toolbar">
               <div class="toolbar-left">
@@ -116,6 +122,61 @@
               </div>
             </div>
           </template>
+
+          <!-- 远程 WebDAV 同步 -->
+          <template v-if="activeTab === 'remote'">
+            <div class="remote-webdav-section">
+              <h3>远程 WebDAV 服务器配置</h3>
+              <div class="config-form">
+                <div class="form-item">
+                  <label>服务器地址</label>
+                  <input v-model="config.serverUrl" placeholder="https://dav.jianguoyun.com/dav/" />
+                </div>
+                <div class="form-item">
+                  <label>用户名</label>
+                  <input v-model="config.username" placeholder="你的用户名" />
+                </div>
+                <div class="form-item">
+                  <label>密码</label>
+                  <input v-model="config.password" type="password" placeholder="你的密码" />
+                </div>
+                <div class="form-actions">
+                  <button @click="testConnection" :disabled="testing">
+                    {{ testing ? '测试中...' : '测试连接' }}
+                  </button>
+                  <button @click="saveConfig" :disabled="saving">
+                    {{ saving ? '保存中...' : '保存配置' }}
+                  </button>
+                  <span v-if="testResult" :class="testResult.connected ? 'success' : 'error'">
+                    {{ testResult.connected ? '✅ ' : '❌ ' }}{{ testResult.message }}
+                  </span>
+                </div>
+              </div>
+              <div class="divider"></div>
+              <div class="actions">
+                <button @click="backupToRemote" :disabled="working || !config.enabled">
+                  {{ working ? '备份中...' : '备份到远程' }}
+                </button>
+                <button @click="refreshRemoteFiles" :disabled="loading">
+                  刷新列表
+                </button>
+              </div>
+              <div class="file-list">
+                <div v-if="loading" class="empty">加载中...</div>
+                <div v-else-if="remoteFiles.length === 0" class="empty">暂无备份文件</div>
+                <div v-else v-for="file in remoteFiles" :key="file.path" class="file-item">
+                  <span class="file-name">{{ file.name }}</span>
+                  <span class="file-meta">{{ formatSize(file.size) }}</span>
+                  <span class="file-meta">{{ formatDate(file.lastModified) }}</span>
+                  <div class="file-actions">
+                    <button class="mini-btn" :disabled="working" @click="restoreFile(file)">恢复</button>
+                    <button class="mini-btn" @click="downloadFile(file)">下载</button>
+                    <button class="mini-btn danger" :disabled="working" @click="deleteFile(file)">删除</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
         </section>
       </div>
     </Transition>
@@ -134,6 +195,16 @@ import {
   type WebdavFileEntry,
   uploadFilesToWebdav,
   uploadTextToWebdav,
+  // 远程 WebDAV
+  saveWebdavConfig,
+  getWebdavConfig,
+  testWebdavConnection,
+  backupToRemoteWebdav,
+  getRemoteWebdavFileList,
+  restoreFromRemoteWebdav,
+  type WebdavConfig,
+  type TestResult,
+  type RemoteWebdavFileEntry,
 } from '../api/webdav'
 import {
   createWebdavBackupPayload,
@@ -160,6 +231,137 @@ const selectedPaths = ref<string[]>([])
 const loading = ref(false)
 const working = ref(false)
 const errorMessage = ref('')
+
+// ==================== 远程 WebDAV ====================
+const activeTab = ref<'local' | 'remote'>('local')
+const config = ref<WebdavConfig>({
+    serverUrl: '',
+    username: '',
+    password: '',
+    enabled: false,
+})
+const remoteFiles = ref<RemoteWebdavFileEntry[]>([])
+const testing = ref(false)
+const saving = ref(false)
+const testResult = ref<TestResult | null>(null)
+
+// 加载配置
+onMounted(async () => {
+    try {
+        const res = await getWebdavConfig()
+        config.value = res.data
+    } catch (e) {
+        console.error('加载配置失败', e)
+    }
+})
+
+async function testConnection() {
+    testing.value = true
+    testResult.value = null
+    try {
+        const res = await testWebdavConnection(config.value)
+        testResult.value = res.data
+    } catch (e: any) {
+        testResult.value = {
+            connected: false,
+            message: e.message || '连接失败',
+        }
+    } finally {
+        testing.value = false
+    }
+}
+
+async function saveConfig() {
+    saving.value = true
+    try {
+        await saveWebdavConfig(config.value)
+        config.value.enabled = true
+        testResult.value = {
+            connected: true,
+            message: '配置已保存',
+        }
+    } catch (e: any) {
+        testResult.value = {
+            connected: false,
+            message: e.message || '保存失败',
+        }
+    } finally {
+        saving.value = false
+    }
+}
+
+async function backupToRemote() {
+    working.value = true
+    try {
+        const res = await backupToRemoteWebdav('/reader-backups/')
+        if (res.data.success) {
+            await refreshRemoteFiles()
+        }
+    } catch (e: any) {
+        console.error('备份失败', e)
+    } finally {
+        working.value = false
+    }
+}
+
+async function refreshRemoteFiles() {
+    loading.value = true
+    try {
+        const res = await getRemoteWebdavFileList('/reader-backups/')
+        remoteFiles.value = res.data || []
+    } catch (e: any) {
+        console.error('获取文件列表失败', e)
+    } finally {
+        loading.value = false
+    }
+}
+
+async function restoreFile(file: RemoteWebdavFileEntry) {
+    if (!confirm(`确认从 "${file.name}" 恢复？当前数据将被覆盖。`)) {
+        return
+    }
+    working.value = true
+    try {
+        await restoreFromRemoteWebdav(file.path)
+        alert('恢复成功')
+    } catch (e: any) {
+        alert('恢复失败: ' + (e.message || '未知错误'))
+    } finally {
+        working.value = false
+    }
+}
+
+function downloadFile(file: RemoteWebdavFileEntry) {
+    const a = document.createElement('a')
+    a.href = file.path
+    a.download = file.name
+    a.click()
+}
+
+function deleteFile(file: RemoteWebdavFileEntry) {
+    if (!confirm(`确认删除 "${file.name}"？`)) {
+        return
+    }
+    working.value = true
+    try {
+        deleteWebdavFile(file.path)
+        refreshRemoteFiles()
+    } catch (e: any) {
+        console.error('删除失败', e)
+    } finally {
+        working.value = false
+    }
+}
+
+function formatSizeRemote(bytes: number): string {
+    if (bytes < 1024) return bytes + ' B'
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+function formatDate(ts: number): string {
+    return new Date(ts).toLocaleString('zh-CN')
+}
 
 const webdavAvailable = computed(() => {
   if (!appStore.isSecureMode) return true
@@ -669,5 +871,91 @@ async function restoreBackup(entry: EntryRow) {
     justify-content: flex-start;
     flex-wrap: wrap;
   }
+}
+
+/* 远程 WebDAV 样式 */
+.tabs {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.tabs button {
+  padding: 8px 16px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #f5f5f5;
+  cursor: pointer;
+}
+
+.tabs button.active {
+  background: #007bff;
+  color: white;
+  border-color: #007bff;
+}
+
+.remote-webdav-section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid #eee;
+}
+
+.config-form {
+  margin-bottom: 20px;
+}
+
+.form-item {
+  margin-bottom: 12px;
+}
+
+.form-item label {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: 500;
+}
+
+.form-item input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 16px 0;
+}
+
+.success {
+  color: green;
+}
+
+.error {
+  color: red;
+}
+
+.divider {
+  height: 1px;
+  background: #eee;
+  margin: 20px 0;
+}
+
+.file-item {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  border-bottom: 1px solid #eee;
+}
+
+.file-name {
+  flex: 1;
+}
+
+.file-meta {
+  margin: 0 12px;
+  color: #666;
+  font-size: 12px;
 }
 </style>

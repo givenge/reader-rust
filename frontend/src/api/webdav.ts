@@ -54,3 +54,60 @@ export function deleteWebdavFile(path: string) {
 export function deleteWebdavFileList(paths: string[]) {
   return http.post<string>('/deleteWebdavFileList', { path: paths }).then((r) => r.data)
 }
+
+// ==================== 远程 WebDAV 客户端 ====================
+
+export interface WebdavConfig {
+    serverUrl: string
+    username: string
+    password: string
+    enabled: boolean
+}
+
+export function saveWebdavConfig(config: WebdavConfig) {
+    return http.post('/saveWebdavConfig', config)
+}
+
+export function getWebdavConfig() {
+    return http.get<WebdavConfig>('/getWebdavConfig')
+}
+
+export function testWebdavConnection(config: WebdavConfig) {
+    return http.post<TestResult>('/testWebdavConnection', config)
+}
+
+export function backupToRemoteWebdav(path = '/reader-backups/') {
+    return http.post<BackupResult>('/backupToRemoteWebdav', { path })
+}
+
+export function getRemoteWebdavFileList(path = '/') {
+    return http.get<RemoteWebdavFileEntry[]>('/getRemoteWebdavFileList', {
+        params: { path },
+    })
+}
+
+export function restoreFromRemoteWebdav(path: string) {
+    return http.post<RestoreResult>('/restoreFromRemoteWebdav', { path })
+}
+
+export interface TestResult {
+    connected: boolean
+    message: string
+}
+
+export interface BackupResult {
+    fileName: string
+    size: number
+}
+
+export interface RemoteWebdavFileEntry {
+    name: string
+    size: number
+    path: string
+    lastModified: number
+    isDirectory: boolean
+}
+
+export interface RestoreResult {
+    restored: boolean
+}

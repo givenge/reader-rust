@@ -3,6 +3,7 @@ pub mod handlers;
 pub mod router;
 
 use crate::app::config::AppConfig;
+use crate::handlers::webdav::WebdavRemoteConfig;
 use crate::service::{
     ai_book_service::AiBookService, ai_model_service::AiModelService,
     book_group_service::BookGroupService, book_service::BookService,
@@ -10,7 +11,8 @@ use crate::service::{
     local_epub_book::LocalEpubBookService, local_txt_book::LocalTxtBookService,
     update_service::UpdateService, user_service::UserService,
 };
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -25,4 +27,5 @@ pub struct AppState {
     pub ai_book_service: Arc<AiBookService>,
     pub ai_model_service: Arc<AiModelService>,
     pub update_service: Arc<UpdateService>,
+    pub webdav_config: Mutex<HashMap<String, WebdavRemoteConfig>>,
 }
